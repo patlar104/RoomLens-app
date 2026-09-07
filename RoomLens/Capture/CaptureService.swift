@@ -70,10 +70,22 @@ actor CaptureService {
 
     /// Resolves camera authorization and, if granted, configures the session.
     ///
+    /// - Parameter session: the caller-owned session to configure and start.
+    ///   Passed in rather than created here because `AVCaptureSession` is not
+    ///   `Sendable` and the preview layer (on the main actor) must reference
+    ///   the same object.
+    ///
+    ///   The caller holds it as `nonisolated(unsafe)`. The compiler cannot
+    ///   prove that is safe, but AVFoundation documents `AVCaptureSession` as
+    ///   safe to use from multiple threads, and the invariant here is stricter
+    ///   still: only this actor mutates its configuration, while the main
+    ///   actor only attaches it to a preview layer for reading. Do not add
+    ///   configuration calls outside this type.
+    ///
     /// Safe to call repeatedly: returns the existing state when already
     /// running, so a view's `.task` re-firing cannot start a second session.
     @discardableResult
-    func prepare() async -> CaptureState {
+    func prepare(session: AVCaptureSession) async -> CaptureState {
         if case .running = state { return state }
 
         state = .preparing
@@ -90,7 +102,7 @@ actor CaptureService {
 
         guard await resolveAuthorization() else { return state }
 
-        return configureSession()
+        return configureSession(session)
     }
 
     /// Maps authorization status onto capture state.
@@ -129,7 +141,7 @@ actor CaptureService {
     /// Skeleton: it establishes the video input and the correct
     /// begin/commitConfiguration bracketing. Manual exposure, focus, zoom, and
     /// white-balance control land here, inside `lockForConfiguration()`.
-    private func configureSession() -> CaptureState {
+    private func configureSession(_ session: AVCaptureSession) -> CaptureState {
         // Re-resolved here rather than passed in, so the probe above stays a
         // cheap, fakeable availability check. A device that vanished between
         // the probe and here is a genuine `.noCaptureDevice`.
@@ -138,26 +150,41 @@ actor CaptureService {
             return state
         }
 
-        let session = AVCaptureSession()
-        session.beginConfiguration()
-        // Always balanced, including on the failure paths below.
-        defer { session.commitConfiguration() }
+        // Configuration is bracketed in its own scope so that
+        // `commitConfiguration()` provably runs BEFORE `startRunning()`.
+        // A `defer` at function scope would fire only at return, i.e. after
+        // startRunning(), which means starting mid-configuration.
+        let configured: CaptureState? = {
+            session.beginConfiguration()
+            defer { session.commitConfiguration() }
 
-        session.sessionPreset = .photo
+            session.sessionPreset = .photo
 
-        do {
-            let input = try AVCaptureDeviceInput(device: device)
-            guard session.canAddInput(input) else {
-                state = .unavailable(.configurationFailed("cannot add camera input"))
-                return state
+            do {
+                let input = try AVCaptureDeviceInput(device: device)
+                guard session.canAddInput(input) else {
+                    return .unavailable(.configurationFailed("cannot add camera input"))
+                }
+                session.addInput(input)
+            } catch {
+                return .unavailable(.configurationFailed(error.localizedDescription))
             }
-            session.addInput(input)
-        } catch {
-            state = .unavailable(.configurationFailed(error.localizedDescription))
+            return nil  // nil == configured successfully
+        }()
+
+        if let failure = configured {
+            state = failure
             return state
         }
 
         self.session = session
+
+        // Blocks until the session is live, which is exactly why it belongs on
+        // this actor and never on the main actor. Without this call the session
+        // is fully configured but produces no frames: the preview stays black
+        // and `.running` would be a lie.
+        session.startRunning()
+
         state = .running
         return state
     }
@@ -165,6 +192,7 @@ actor CaptureService {
     /// Stops the running session, if any.
     func stop() {
         session?.stopRunning()
+        session = nil
         state = .idle
     }
 }

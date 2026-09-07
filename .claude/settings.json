@@ -46,6 +46,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-shared-checkout.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking for unsafe writes in a shared checkout…"
+          },
+          {
+            "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-gate.sh\"",
             "if": "Bash(git commit:*)",
             "timeout": 60,

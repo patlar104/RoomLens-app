@@ -55,7 +55,7 @@ struct CaptureAuthorizationTests {
             hasCaptureDevice: { true }
         )
 
-        let state = await service.prepare()
+        let state = await service.prepare(session: AVCaptureSession())
 
         #expect(state == .unavailable(.denied))
         #expect(prompted.value == false)
@@ -67,7 +67,7 @@ struct CaptureAuthorizationTests {
             authorization: StubAuthorization(status: .restricted),
             hasCaptureDevice: { true })
 
-        let state = await service.prepare()
+        let state = await service.prepare(session: AVCaptureSession())
 
         #expect(state == .unavailable(.restricted))
         // Sending a restricted user to Settings would be a dead end.
@@ -80,7 +80,7 @@ struct CaptureAuthorizationTests {
             authorization: StubAuthorization(status: .notDetermined, grantsAccess: false),
             hasCaptureDevice: { true })
 
-        let state = await service.prepare()
+        let state = await service.prepare(session: AVCaptureSession())
 
         #expect(state == .unavailable(.denied))
     }
@@ -97,7 +97,7 @@ struct CaptureAuthorizationTests {
             hasCaptureDevice: { true }
         )
 
-        _ = await service.prepare()
+        _ = await service.prepare(session: AVCaptureSession())
 
         #expect(prompted.value == true)
     }
@@ -108,7 +108,7 @@ struct CaptureAuthorizationTests {
             authorization: StubAuthorization(status: .authorized),
             hasCaptureDevice: { true })
 
-        let state = await service.prepare()
+        let state = await service.prepare(session: AVCaptureSession())
 
         // An authorized user must never be misreported as denied or
         // restricted. On the simulator the real device lookup inside
@@ -134,7 +134,7 @@ struct CaptureAuthorizationTests {
             hasCaptureDevice: { false }
         )
 
-        let state = await service.prepare()
+        let state = await service.prepare(session: AVCaptureSession())
 
         #expect(state == .unavailable(.noCaptureDevice))
         // Never prompt for a camera that does not exist.

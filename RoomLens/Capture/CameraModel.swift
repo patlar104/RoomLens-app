@@ -5,6 +5,7 @@
 //  The main-actor view model that fronts the capture layer.
 //
 
+import AVFoundation
 import Observation
 
 /// Bridges the off-main-actor `CaptureService` to SwiftUI.
@@ -17,6 +18,17 @@ import Observation
 final class CameraModel {
     /// Mirrors the capture session state for the UI to render.
     private(set) var state: CaptureState = .idle
+
+    /// The session the preview renders.
+    ///
+    /// Created and owned here on the main actor, then handed to the capture
+    /// actor to configure. `AVCaptureSession` is not `Sendable`, so it must
+    /// not be returned *out* of the actor; passing it in once, at a known
+    /// point, keeps a single owner and satisfies Swift 6.
+    ///
+    /// Only the actor mutates its configuration; the preview layer merely
+    /// reads frames from it, which AVFoundation supports.
+    nonisolated(unsafe) let previewSession = AVCaptureSession()
 
     private let service: CaptureService
 
@@ -31,7 +43,7 @@ final class CameraModel {
     /// Callers should drive this from `.task`, which cancels on disappear;
     /// no free-standing `Task {}` is started here.
     func prepare() async {
-        state = await service.prepare()
+        state = await service.prepare(session: previewSession)
     }
 
     /// Stops the session, e.g. when the capture view goes away.

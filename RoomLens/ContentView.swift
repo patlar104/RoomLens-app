@@ -11,21 +11,22 @@ struct ContentView: View {
     @State private var camera = CameraModel()
 
     var body: some View {
-        VStack(spacing: 16) {
+        Group {
             switch camera.state {
             case .idle, .preparing:
                 ProgressView("Preparing camera…")
 
             case .running:
-                // The live preview layer attaches here once it is built.
-                Text("Camera ready")
-                    .font(.headline)
+                CameraPreview(session: camera.previewSession)
+                    // The preview fills the screen; a room shot letterboxed
+                    // into a padded box would defeat the point.
+                    .ignoresSafeArea()
 
             case .unavailable(let reason):
                 CameraUnavailableView(reason: reason)
+                    .padding()
             }
         }
-        .padding()
         // `.task` is cancelled automatically when the view disappears, which
         // is why no free-standing `Task {}` is used here.
         .task {
