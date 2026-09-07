@@ -16,11 +16,13 @@ button integration — not generic app plumbing.
 
 - SwiftUI lifecycle (`RoomLensApp`), single app target `RoomLens`.
 - **iOS 26.0** minimum deployment target (`IPHONEOS_DEPLOYMENT_TARGET = 26.0`),
-  Swift 5.0. Rationale: iOS 26 is the current shipping major; the Camera Control
-  button API only needs iOS 18, so nothing here requires a newer floor, and 26.0
-  keeps a modern SwiftUI/concurrency baseline while still running on the locally
-  installed simulator runtime. Lower to 18.0 only if broad device reach becomes
-  a goal (would then need `@available` guards for iOS 26-only APIs).
+  **Swift 6 language mode** (strict concurrency, `SWIFT_VERSION = 6.0`) with
+  `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. Rationale: iOS 26 is the current
+  shipping major; the Camera Control button API only needs iOS 18, so nothing
+  here requires a newer floor, and 26.0 keeps a modern SwiftUI/concurrency
+  baseline while still running on the locally installed simulator runtime.
+  Lower to 18.0 only if broad device reach becomes a goal (would then need
+  `@available` guards for iOS 26-only APIs).
 - Unit tests: **Swift Testing** (`import Testing`, `@Test`, `#expect`,
   `#require`) in `RoomLensTests`.
 - UI tests: **XCTest** in `RoomLensUITests`.
@@ -68,6 +70,29 @@ canonical "see it run" path and what the `run` skill should use.
   string **and** graceful handling of a denied authorization status.
 - Formatting: `xcrun swift-format` (runs automatically via a PostToolUse hook
   on save). Match existing style.
+
+## Capture architecture
+
+The capture layer lives in `RoomLens/Capture/` and is deliberately layered so
+session work stays off the main actor:
+
+- `CaptureService` is an **`actor`** — it *is* the dedicated session queue. It
+  owns the `AVCaptureSession` and never vends it to callers, so UI code cannot
+  mutate the session off-queue. All `lockForConfiguration()` work belongs here.
+- `CameraModel` is `@Observable @MainActor` and is the **only** type views
+  talk to. It awaits the actor and publishes `CaptureState` back on the main
+  actor.
+- `CameraAuthorizing` is the test seam. The simulator has no camera and unit
+  tests must never trigger a TCC prompt, so every authorization decision is
+  injected. `RoomLensTests` drives the denied / restricted / not-determined
+  paths through a stub.
+- `CaptureState` / `CaptureUnavailableReason` are `nonisolated Sendable` value
+  types. Because the project defaults to main-actor isolation, types crossing
+  the actor boundary must be marked `nonisolated` explicitly — including their
+  `Equatable` conformances, or Swift 6 rejects even an `==` comparison.
+
+Only `.denied` is resolvable in Settings; `.restricted` and `.noCaptureDevice`
+must not offer that affordance.
 
 ## Do not touch without explicit approval
 
