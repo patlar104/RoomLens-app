@@ -20,6 +20,11 @@
 
 payload=$(cat)
 
+# Works under two hook systems:
+#   - Claude Code: PreToolUse, payload is {"tool_input":{"command":...}}
+#   - jcode:       pre_tool,    payload is the raw tool input {"command":...},
+#                  with the tool name in $JCODE_HOOK_TOOL_NAME.
+# Only shell tools carry a command, so a missing command means "allow".
 command=$(printf '%s' "$payload" | /usr/bin/python3 -c \
   'import sys, json
 try:
@@ -27,7 +32,14 @@ try:
 except Exception:
     print("")
     sys.exit(0)
-print(d.get("tool_input", {}).get("command", ""))' 2>/dev/null)
+if not isinstance(d, dict):
+    print("")
+    sys.exit(0)
+# jcode passes the tool input directly; Claude Code nests it.
+inner = d.get("tool_input")
+if not isinstance(inner, dict):
+    inner = d
+print(inner.get("command", "") or "")' 2>/dev/null)
 
 [ -n "$command" ] || exit 0
 
