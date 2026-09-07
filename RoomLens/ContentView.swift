@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var camera = CameraModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -27,10 +28,22 @@ struct ContentView: View {
                     .padding()
             }
         }
-        // `.task` is cancelled automatically when the view disappears, which
-        // is why no free-standing `Task {}` is used here.
-        .task {
-            await camera.prepare()
+        // Drives the session from the app lifecycle. `.task(id:)` re-runs on
+        // each phase change and is cancelled when the view disappears, so no
+        // free-standing `Task {}` is needed (per the project conventions).
+        //
+        // Releasing the camera when not frontmost matters: a running capture
+        // session drains the battery, and iOS may terminate an app that holds
+        // the camera in the background.
+        .task(id: scenePhase) {
+            switch scenePhase {
+            case .active:
+                await camera.resume()
+            case .inactive, .background:
+                await camera.stop()
+            @unknown default:
+                await camera.stop()
+            }
         }
     }
 }

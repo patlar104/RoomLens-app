@@ -189,10 +189,28 @@ actor CaptureService {
         return state
     }
 
-    /// Stops the running session, if any.
+    /// Stops the session but keeps its configuration.
+    ///
+    /// The session object is retained deliberately: it is owned by the main
+    /// actor for the preview layer, and its inputs stay attached. Resuming is
+    /// therefore `startRunning()` again rather than a full reconfigure, which
+    /// would try to add a second input to an already-configured session and
+    /// fail with "cannot add camera input".
     func stop() {
         session?.stopRunning()
-        session = nil
         state = .idle
+    }
+
+    /// Resumes a previously configured session, e.g. on returning to the
+    /// foreground. Returns false when there is nothing configured to resume,
+    /// so the caller knows a full `prepare()` is required.
+    @discardableResult
+    func resume() -> Bool {
+        guard let session else { return false }
+        if !session.isRunning {
+            session.startRunning()
+        }
+        state = .running
+        return true
     }
 }

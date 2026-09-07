@@ -46,7 +46,20 @@ final class CameraModel {
         state = await service.prepare(session: previewSession)
     }
 
-    /// Stops the session, e.g. when the capture view goes away.
+    /// Brings the camera back after the app returns to the foreground.
+    ///
+    /// Resumes the existing session when one is already configured, and falls
+    /// back to a full `prepare()` otherwise. Reconfiguring an already-running
+    /// session would fail, because its camera input is still attached.
+    func resume() async {
+        if await service.resume() {
+            state = .running
+        } else {
+            await prepare()
+        }
+    }
+
+    /// Stops the session, e.g. when the app leaves the foreground.
     func stop() async {
         await service.stop()
         state = .idle

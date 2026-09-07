@@ -144,6 +144,61 @@ struct CaptureAuthorizationTests {
     }
 }
 
+@Suite("Capture lifecycle")
+struct CaptureLifecycleTests {
+
+    @Test("Resuming an unconfigured service reports that it cannot resume")
+    func resumeWithoutConfiguration() async throws {
+        // Nothing has been prepared, so there is no session to restart and
+        // the caller must fall back to a full prepare().
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+
+        let didResume = await service.resume()
+
+        #expect(didResume == false)
+    }
+
+    @Test("Stopping then preparing again does not re-add the camera input")
+    func stopThenPrepareIsClean() async throws {
+        // Regression guard for the background/foreground cycle: stop() must
+        // not leave the service in a state where the next prepare() tries to
+        // add a second input to an already-configured session, which fails
+        // with "cannot add camera input".
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+        // Held the same way CameraModel holds it: one long-lived session
+        // shared with the (main-actor) preview layer.
+        nonisolated(unsafe) let session = AVCaptureSession()
+
+        _ = await service.prepare(session: session)
+        await service.stop()
+        let state = await service.prepare(session: session)
+
+        // On the simulator configuration ends at .noCaptureDevice; on real
+        // hardware it reaches .running. Either is fine — what must never
+        // happen is a configuration failure from duplicate inputs.
+        if case .unavailable(.configurationFailed(let detail)) = state {
+            Issue.record("second prepare() failed to configure: \(detail)")
+        }
+    }
+
+    @Test("Stopping returns to idle")
+    func stopReturnsToIdle() async throws {
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+
+        _ = await service.prepare(session: AVCaptureSession())
+        await service.stop()
+        let state = await service.state
+
+        #expect(state == .idle)
+    }
+}
+
 @Suite("Capture state")
 struct CaptureStateTests {
 
