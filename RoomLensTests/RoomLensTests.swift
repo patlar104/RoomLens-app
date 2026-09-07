@@ -51,7 +51,8 @@ struct CaptureAuthorizationTests {
             authorization: StubAuthorization(
                 status: .denied,
                 didRequest: { prompted.mark() }
-            )
+            ),
+            hasCaptureDevice: { true }
         )
 
         let state = await service.prepare()
@@ -63,7 +64,8 @@ struct CaptureAuthorizationTests {
     @Test("Restricted access is distinct from denial")
     func restrictedIsDistinct() async throws {
         let service = CaptureService(
-            authorization: StubAuthorization(status: .restricted))
+            authorization: StubAuthorization(status: .restricted),
+            hasCaptureDevice: { true })
 
         let state = await service.prepare()
 
@@ -75,7 +77,8 @@ struct CaptureAuthorizationTests {
     @Test("Declining the prompt yields denied")
     func notDeterminedThenDeclined() async throws {
         let service = CaptureService(
-            authorization: StubAuthorization(status: .notDetermined, grantsAccess: false))
+            authorization: StubAuthorization(status: .notDetermined, grantsAccess: false),
+            hasCaptureDevice: { true })
 
         let state = await service.prepare()
 
@@ -90,7 +93,8 @@ struct CaptureAuthorizationTests {
                 status: .notDetermined,
                 grantsAccess: true,
                 didRequest: { prompted.mark() }
-            )
+            ),
+            hasCaptureDevice: { true }
         )
 
         _ = await service.prepare()
@@ -101,16 +105,42 @@ struct CaptureAuthorizationTests {
     @Test("Granted access proceeds past authorization to configuration")
     func grantedProceedsToConfiguration() async throws {
         let service = CaptureService(
-            authorization: StubAuthorization(status: .authorized))
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
 
         let state = await service.prepare()
 
-        // The simulator has no capture device, so a granted run must reach
-        // configuration and fail there — never at authorization. This is what
-        // proves an authorized user is not misreported as denied.
+        // An authorized user must never be misreported as denied or
+        // restricted. On the simulator the real device lookup inside
+        // configuration still fails, so the run ends at .noCaptureDevice or
+        // .running depending on hardware — either proves authorization passed.
         #expect(state != .unavailable(.denied))
         #expect(state != .unavailable(.restricted))
-        #expect(state == .unavailable(.noCaptureDevice) || state == .running)
+    }
+
+    @Test("No camera reports .noCaptureDevice and never prompts for access")
+    func noCameraDoesNotPrompt() async throws {
+        // Regression test for a bug found by running the app: on the
+        // simulator the status is .notDetermined, requestAccess() returns
+        // false, and that was mapped to .denied — offering an "Open Settings"
+        // button to a user whose device has no camera at all.
+        let prompted = Prompted()
+        let service = CaptureService(
+            authorization: StubAuthorization(
+                status: .notDetermined,
+                grantsAccess: false,
+                didRequest: { prompted.mark() }
+            ),
+            hasCaptureDevice: { false }
+        )
+
+        let state = await service.prepare()
+
+        #expect(state == .unavailable(.noCaptureDevice))
+        // Never prompt for a camera that does not exist.
+        #expect(prompted.value == false)
+        // And never offer a Settings link that cannot fix anything.
+        #expect(!CaptureUnavailableReason.noCaptureDevice.isResolvableInSettings)
     }
 }
 

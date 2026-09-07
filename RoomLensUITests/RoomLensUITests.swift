@@ -10,32 +10,44 @@ import XCTest
 final class RoomLensUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
+        // Stop immediately on failure so a broken launch does not cascade.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
+    /// The app must resolve the capture state on launch and render a real
+    /// screen rather than hanging on the spinner.
+    ///
+    /// The simulator has no capture device, so the correct outcome here is the
+    /// "camera unavailable" screen. This is the end-to-end proof that
+    /// ContentView -> CameraModel -> CaptureService is actually wired up: if
+    /// the `.task` never ran, or the model never published state back to the
+    /// main actor, the app would sit on "Preparing camera…" forever.
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testResolvesCaptureStateOnLaunch() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        let unavailable = app.staticTexts["Camera unavailable"]
+        let ready = app.staticTexts["Camera ready"]
+
+        // Whichever appears, the point is that the spinner resolves.
+        let resolved = NSPredicate(format: "exists == true")
+        expectation(for: resolved, evaluatedWith: unavailable, handler: nil)
+        waitForExpectations(timeout: 10)
+
+        XCTAssertTrue(
+            unavailable.exists || ready.exists,
+            "Capture state never resolved; the app is still preparing.")
+
+        // On a device with no camera the user must not be told to open
+        // Settings, since no setting would fix it.
+        XCTAssertFalse(
+            app.buttons["Open Settings"].exists,
+            "Offered a Settings link for a simulator with no capture device.")
     }
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }

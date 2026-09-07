@@ -34,15 +34,38 @@ import AVFoundation
 actor CaptureService {
     private let authorization: CameraAuthorizing
 
+    /// Reports whether this hardware has a usable capture device.
+    ///
+    /// Deliberately a `Bool` probe rather than a device factory:
+    /// `AVCaptureDevice` has no public initializer, so a seam returning a
+    /// device could never be given a non-nil value in a test. A probe lets
+    /// tests simulate "camera present" and exercise the authorization matrix,
+    /// which is the behaviour that actually needs covering.
+    private let hasCaptureDevice: @Sendable () -> Bool
+
     /// Non-nil only once configuration has succeeded.
     private var session: AVCaptureSession?
 
     private(set) var state: CaptureState = .idle
 
-    /// - Parameter authorization: injected so tests can drive denied,
-    ///   restricted, and not-determined paths without touching TCC.
-    init(authorization: CameraAuthorizing = SystemCameraAuthorization()) {
+    /// - Parameters:
+    ///   - authorization: injected so tests can drive denied, restricted, and
+    ///     not-determined paths without touching TCC.
+    ///   - hasCaptureDevice: injected so tests can simulate camera hardware
+    ///     being present or absent.
+    init(
+        authorization: CameraAuthorizing = SystemCameraAuthorization(),
+        hasCaptureDevice: @escaping @Sendable () -> Bool = {
+            CaptureService.defaultDevice() != nil
+        }
+    ) {
         self.authorization = authorization
+        self.hasCaptureDevice = hasCaptureDevice
+    }
+
+    /// The back wide-angle camera RoomLens captures with.
+    private static func defaultDevice() -> AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
     }
 
     /// Resolves camera authorization and, if granted, configures the session.
@@ -54,6 +77,16 @@ actor CaptureService {
         if case .running = state { return state }
 
         state = .preparing
+
+        // Hardware availability is resolved BEFORE authorization, on purpose.
+        // Prompting for camera access on a device that has no camera (the
+        // simulator) is pointless, and the refusal would be mapped onto
+        // `.denied` — showing an "Open Settings" button that cannot possibly
+        // fix anything. Reported as `.noCaptureDevice` instead.
+        guard hasCaptureDevice() else {
+            state = .unavailable(.noCaptureDevice)
+            return state
+        }
 
         guard await resolveAuthorization() else { return state }
 
@@ -97,12 +130,10 @@ actor CaptureService {
     /// begin/commitConfiguration bracketing. Manual exposure, focus, zoom, and
     /// white-balance control land here, inside `lockForConfiguration()`.
     private func configureSession() -> CaptureState {
-        // No camera in the simulator. Reported distinctly from a denial so the
-        // UI does not tell a simulator user to open Settings.
-        guard
-            let device = AVCaptureDevice.default(
-                .builtInWideAngleCamera, for: .video, position: .back)
-        else {
+        // Re-resolved here rather than passed in, so the probe above stays a
+        // cheap, fakeable availability check. A device that vanished between
+        // the probe and here is a genuine `.noCaptureDevice`.
+        guard let device = Self.defaultDevice() else {
             state = .unavailable(.noCaptureDevice)
             return state
         }
