@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode — build output
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+# Note: Package.resolved is intentionally NOT ignored — this is an app, so it
+# should be committed for reproducible dependency resolution once SPM deps exist.
+
+# CocoaPods / Carthage (not used today, ignored pre-emptively)
+Pods/
+Carthage/Build/
+
+# Claude Code — personal overrides (keep settings.json committed)
+.claude/settings.local.json
+
+# Editor — personal / machine-specific (current contents are remote-dev prefs only)
+.vscode/
