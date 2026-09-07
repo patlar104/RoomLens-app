@@ -48,6 +48,12 @@ set -o pipefail && xcodebuild test -project RoomLens.xcodeproj -scheme RoomLens 
 Always prefix with `set -o pipefail` so a build/test failure is not masked by
 the pipe. If you need the unfiltered log, drop the `| xcbeautify`.
 
+To actually run the app in the simulator, use `Scripts/sim.sh` — it picks and
+boots a usable iPhone simulator, builds, installs, and launches RoomLens.
+`Scripts/sim.sh --shot` also saves a screenshot to `build/last-shot.png`;
+`Scripts/sim.sh --device NAME` targets a specific simulator. This is the
+canonical "see it run" path and what the `run` skill should use.
+
 ## Conventions
 
 - SwiftUI only for UI. Prefer the `@Observable` macro over `ObservableObject`.

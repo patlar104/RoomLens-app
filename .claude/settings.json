@@ -5,12 +5,27 @@
       "Bash(xcrun simctl:*)",
       "Bash(xcrun swift-format:*)",
       "Bash(xcrun xctrace:*)",
+      "Bash(xcrun --find:*)",
       "Bash(swift-format:*)",
+      "Bash(xcbeautify:*)",
+      "Bash(shellcheck:*)",
+      "Bash(plutil -p:*)",
+      "Bash(plutil -lint:*)",
+      "Bash(defaults read:*)",
+      "Bash(./Scripts/sim.sh:*)",
+      "Bash(Scripts/sim.sh:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git show:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git restore:*)",
+      "Bash(git stash:*)",
+      "Bash(git switch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)"
     ]
   },
   "hooks": {
@@ -21,6 +36,33 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-swift.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-gate.sh\"",
+            "if": "Bash(git commit:*)",
+            "timeout": 60,
+            "statusMessage": "swift-format lint on staged files…"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/build-gate.sh\"",
+            "asyncRewake": true,
+            "timeout": 600,
+            "statusMessage": "Verifying the app still builds…"
           }
         ]
       }
