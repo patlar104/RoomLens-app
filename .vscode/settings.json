@@ -1,0 +1,7 @@
+{
+    "evenBetterToml.schema.enabled": true,
+    "evenBetterToml.schema.associations": {
+        ".*/\\.codex/agents/.*\\.toml$": "./.codex/agent.schema.json",
+        ".*/\\.codex/config\\.toml$": "https://developers.openai.com/codex/config-schema.json"
+    }
+}

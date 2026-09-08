@@ -1,0 +1,6 @@
+# Even Better TOML / Taplo: custom Codex agents are not config.toml.
+[[rule]]
+include = [".codex/agents/**/*.toml"]
+
+[rule.schema]
+path = ".codex/agent.schema.json"

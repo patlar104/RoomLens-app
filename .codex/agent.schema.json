@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://roomlens.local/codex-custom-agent.schema.json",
+  "title": "Codex custom agent",
+  "description": "Standalone custom-agent file under .codex/agents/*.toml. Required fields are name, description, and developer_instructions; any config.toml key may also be set because Codex loads these files as a config layer.",
+  "type": "object",
+  "required": ["name", "description", "developer_instructions"],
+  "additionalProperties": true,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agent name Codex uses when spawning or referring to this agent. Source of truth even if it differs from the filename."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-facing guidance for when Codex should use this agent."
+    },
+    "developer_instructions": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Core instructions that define the agent's behavior."
+    },
+    "nickname_candidates": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Candidate nicknames for spawned agents of this role."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model override for this agent."
+    },
+    "model_reasoning_effort": {
+      "type": "string",
+      "description": "Reasoning-effort override for this agent."
+    },
+    "sandbox_mode": {
+      "type": "string",
+      "enum": ["read-only", "workspace-write", "danger-full-access"],
+      "description": "Sandbox override for this agent."
+    },
+    "mcp_servers": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "MCP servers available to this agent."
+    }
+  }
+}

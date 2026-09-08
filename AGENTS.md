@@ -119,9 +119,20 @@ this (see below) and will block the unsafe forms.
 - `swiftui-reviewer` — read-only review of Swift/SwiftUI diffs, including
   capture-session and concurrency correctness.
 
-Defined once per host: `.claude/agents/` (Claude Code) and `.cursor/agents/`
-(Cursor). Codex has no project subagent format today, so invoke the same
-checklists inline.
+Defined once per host: `.claude/agents/` (Claude Code markdown), `.cursor/agents/`
+(Cursor markdown), and `.codex/agents/` (Codex custom-agent TOML). Keep the
+instructions aligned across those copies.
+
+Codex agent files are **not** `config.toml`. Required top-level keys are
+`name`, `description`, and `developer_instructions` (optional:
+`nickname_candidates`, plus any session `config.toml` key such as `model` or
+`sandbox_mode`). Point each file at `.codex/agent.schema.json` with
+`#:schema ../agent.schema.json`. Do **not** associate them with
+`https://developers.openai.com/codex/config-schema.json` or the Taplo config
+schema — Even Better TOML then rejects those three keys as additional
+properties. `.taplo.toml` and `.vscode/settings.json` already bind
+`.codex/agents/*.toml` to the agent schema; `config.toml` uses the official
+Codex config schema.
 
 ## Automated hooks
 
@@ -129,6 +140,10 @@ The hook scripts live in `Scripts/hooks/` and are shared by every host, wired
 up in `.claude/settings.json`, `.cursor/hooks.json`, and `.codex/config.toml`.
 They are host-neutral: `Scripts/hooks/_common.sh` normalizes the differing
 payload shapes, so add new hooks there rather than assuming one host's JSON.
+
+**Never add `.codex/hooks.json`.** Codex loads that file *and* `.codex/config.toml`
+and warns that this layer should have a single representation. Hooks for Codex
+belong only in `config.toml`.
 
 | Script | When | Effect |
 | --- | --- | --- |
@@ -140,3 +155,24 @@ payload shapes, so add new hooks there rather than assuming one host's JSON.
 Cursor needs "Include third-party Plugins, Skills, and other configs" **off**
 for this repo, or it will load `.claude/settings.json` in addition to
 `.cursor/hooks.json` and run every hook twice.
+
+## Editor settings vs personal overrides
+
+`.vscode/` is gitignored except the shared files that make Codex TOML
+validate in Cursor/VS Code: `.vscode/settings.json` (Even Better TOML schema
+associations) and `.vscode/extensions.json` (recommends `tamasfe.even-better-toml`).
+Do not dump personal Remote-SSH prefs into the committed settings file.
+
+`.cursor/settings.local.json` is **not** loaded as editor/workspace settings.
+It is a Claude-style hooks override name, not a Cursor overlay on
+`.vscode/settings.json`. Putting `remote.*` or TOML schema keys there has no
+effect.
+
+Personal editor overlay that *does* load:
+
+- **Open folder:** User settings
+  (`~/Library/Application Support/Cursor/User/settings.json`) apply
+  `remote.downloadExtensionsLocally` and `remote.localPortHost`.
+- **Project-local file:** gitignored `RoomLens.local.code-workspace`. Open it
+  with File → Open Workspace from File. Workspace `"settings"` override
+  folder settings. Opening the folder alone ignores this file.
