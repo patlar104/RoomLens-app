@@ -25,11 +25,26 @@ nonisolated enum CaptureUnavailableReason: Equatable, Sendable {
     case noCaptureDevice
     /// Session configuration failed.
     case configurationFailed(String)
+    /// The running session failed at runtime (media services reset, hardware error).
+    case sessionFailed(String)
 
     /// Whether sending the user to Settings could plausibly resolve this.
     var isResolvableInSettings: Bool {
         self == .denied
     }
+}
+
+/// Why a running session was interrupted by the system.
+///
+/// Mirrors the subset of `AVCaptureSession.InterruptionReason` that matters to
+/// the UI, as a `Sendable` value so it can cross the actor boundary.
+nonisolated enum CaptureInterruptionReason: Equatable, Sendable {
+    /// Another app took the camera, or the app is not the active foreground app.
+    case cameraInUseByAnotherClient
+    /// The app is running multitasked and video is not available.
+    case videoDeviceNotAvailableInBackground
+    /// The device is unavailable for any other system reason.
+    case unknown
 }
 
 /// The lifecycle of the capture session.
@@ -43,6 +58,11 @@ nonisolated enum CaptureState: Equatable, Sendable {
     case preparing
     /// The session is configured and running.
     case running
+    /// The session was configured and started, but the system paused it.
+    ///
+    /// Distinct from `.unavailable`: this recovers on its own when the
+    /// interruption ends, so the UI must not offer a Settings affordance.
+    case interrupted(CaptureInterruptionReason)
     /// The session cannot run.
     case unavailable(CaptureUnavailableReason)
 

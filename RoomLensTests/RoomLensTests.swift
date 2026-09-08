@@ -271,6 +271,100 @@ struct CaptureStateTests {
         #expect(!CaptureState.idle.isRunning)
         #expect(!CaptureState.preparing.isRunning)
         #expect(!CaptureState.unavailable(.denied).isRunning)
+        #expect(!CaptureState.interrupted(.cameraInUseByAnotherClient).isRunning)
+    }
+
+    @Test("A runtime session failure is not resolvable in Settings")
+    func sessionFailureIsNotResolvable() {
+        #expect(!CaptureUnavailableReason.sessionFailed("boom").isResolvableInSettings)
+    }
+}
+
+@Suite("Capture state observation")
+struct CaptureStateObservationTests {
+
+    @Test("Observers receive the current state immediately")
+    func streamYieldsCurrentState() async throws {
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .denied),
+            hasCaptureDevice: { true })
+
+        var iterator = await service.stateUpdates().makeAsyncIterator()
+        let first = await iterator.next()
+
+        #expect(first == .idle)
+    }
+
+    @Test("Unsolicited state changes reach observers")
+    func streamPublishesUnsolicitedChanges() async throws {
+        // The whole point of the stream: nothing asked for this transition,
+        // yet the UI must learn about it.
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+
+        var iterator = await service.stateUpdates().makeAsyncIterator()
+        _ = await iterator.next()  // current state
+
+        await service.prepare(session: AVCaptureSession())
+        // Only a session that actually wants to run reports interruptions.
+        await service.handleInterruption(.cameraInUseByAnotherClient)
+
+        var seen: CaptureState?
+        while let next = await iterator.next() {
+            seen = next
+            if case .interrupted = next { break }
+        }
+
+        #expect(seen == .interrupted(.cameraInUseByAnotherClient))
+    }
+
+    @Test("Runtime errors are reported as a failed session, not as denial")
+    func runtimeErrorIsReportedAsSessionFailure() async throws {
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+
+        await service.prepare(session: AVCaptureSession())
+        await service.handleRuntimeError("media services were reset")
+
+        let state = await service.state
+
+        #expect(state == .unavailable(.sessionFailed("media services were reset")))
+        if case .unavailable(let reason) = state {
+            // A Settings link here would be a dead end.
+            #expect(!reason.isResolvableInSettings)
+        }
+    }
+
+    @Test("A stopped session ignores late interruption and error events")
+    func stoppedSessionIgnoresLateEvents() async throws {
+        // Notifications can arrive after stop(); they must not resurrect state.
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+
+        await service.prepare(session: AVCaptureSession())
+        await service.stop()
+        await service.handleInterruption(.unknown)
+        await service.handleRuntimeError("late error")
+
+        let state = await service.state
+
+        #expect(state == .idle)
+    }
+
+    @Test("Interruption ending without a session does not claim to be running")
+    func interruptionEndedWithoutSessionDoesNotClaimRunning() async throws {
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .denied),
+            hasCaptureDevice: { true })
+
+        await service.handleInterruptionEnded()
+
+        let state = await service.state
+
+        #expect(state == .idle)
     }
 }
 

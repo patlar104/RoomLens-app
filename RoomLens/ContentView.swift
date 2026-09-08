@@ -27,10 +27,20 @@ struct ContentView: View {
                     CameraControlsView(camera: camera)
                 }
 
+            case .interrupted(let reason):
+                CameraInterruptedView(reason: reason)
+                    .padding()
+
             case .unavailable(let reason):
                 CameraUnavailableView(reason: reason)
                     .padding()
             }
+        }
+        // The capture layer is the authority on session state: interruptions
+        // and runtime errors happen without the app asking. This long-lived
+        // task mirrors them, so the UI cannot keep showing a dead preview.
+        .task {
+            await camera.observeState()
         }
         // Drives the session from the app lifecycle. `.task(id:)` re-runs on
         // each phase change and is cancelled when the view disappears, so no
@@ -81,6 +91,34 @@ private struct CameraUnavailableView: View {
             "No camera is available on this device."
         case .configurationFailed(let detail):
             "The camera could not be configured. \(detail)"
+        case .sessionFailed(let detail):
+            "The camera stopped working. \(detail)"
+        }
+    }
+}
+
+/// Shown while the system holds the camera. Deliberately offers no Settings
+/// link: an interruption resolves itself, and the capture layer restarts the
+/// session when it ends.
+private struct CameraInterruptedView: View {
+    let reason: CaptureInterruptionReason
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Camera paused", systemImage: "pause.circle")
+        } description: {
+            Text(message)
+        }
+    }
+
+    private var message: String {
+        switch reason {
+        case .cameraInUseByAnotherClient:
+            "Another app is using the camera. RoomLens will resume automatically."
+        case .videoDeviceNotAvailableInBackground:
+            "The camera is unavailable right now. RoomLens will resume automatically."
+        case .unknown:
+            "The system paused the camera. RoomLens will resume automatically."
         }
     }
 }

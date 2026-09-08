@@ -70,6 +70,16 @@ actor CaptureService {
     /// whether the newest lifecycle request still wants capture to be running.
     private var wantsRunning = false
 
+    /// Continuations for `stateUpdates()`.
+    ///
+    /// The session can change state without anybody asking (interruption,
+    /// media-services reset), so state cannot be delivered by return value
+    /// alone. Every observer gets the authoritative stream.
+    private var stateObservers: [UUID: AsyncStream<CaptureState>.Continuation] = [:]
+
+    /// Live `NotificationCenter` observation tasks for the configured session.
+    private var sessionObservationTasks: [Task<Void, Never>] = []
+
     /// - Parameters:
     ///   - authorization: injected so tests can drive denied, restricted, and
     ///     not-determined paths without touching TCC.
@@ -83,6 +93,44 @@ actor CaptureService {
     ) {
         self.authorization = authorization
         self.hasCaptureDevice = hasCaptureDevice
+    }
+
+    deinit {
+        for task in sessionObservationTasks {
+            task.cancel()
+        }
+        for continuation in stateObservers.values {
+            continuation.finish()
+        }
+    }
+
+    /// The authoritative state stream.
+    ///
+    /// Yields the current state immediately, then every subsequent change,
+    /// including ones the app never requested (interruption, runtime error,
+    /// recovery). The UI must render this rather than assuming that a
+    /// successful `prepare()` means the camera stays live.
+    func stateUpdates() -> AsyncStream<CaptureState> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<CaptureState>.makeStream()
+        stateObservers[id] = continuation
+        continuation.yield(state)
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeObserver(id) }
+        }
+        return stream
+    }
+
+    private func removeObserver(_ id: UUID) {
+        stateObservers.removeValue(forKey: id)
+    }
+
+    /// Single funnel for every state change, so no path can publish silently.
+    private func publish(_ next: CaptureState) {
+        state = next
+        for continuation in stateObservers.values {
+            continuation.yield(next)
+        }
     }
 
     /// The back wide-angle camera RoomLens captures with.
@@ -114,7 +162,7 @@ actor CaptureService {
 
         if case .running = state { return state }
 
-        state = .preparing
+        publish(.preparing)
 
         // Hardware availability is resolved BEFORE authorization, on purpose.
         // Prompting for camera access on a device that has no camera (the
@@ -125,7 +173,7 @@ actor CaptureService {
             guard shouldContinueStart(generation) else {
                 return abortObsoleteStart(generation)
             }
-            state = .unavailable(.noCaptureDevice)
+            publish(.unavailable(.noCaptureDevice))
             return state
         }
 
@@ -159,7 +207,7 @@ actor CaptureService {
         }
 
         if case .preparing = state {
-            state = .idle
+            publish(.idle)
         }
 
         return state
@@ -179,7 +227,7 @@ actor CaptureService {
                     _ = abortObsoleteStart(generation)
                     return false
                 }
-                state = .unavailable(.denied)
+                publish(.unavailable(.denied))
                 return false
             }
             return shouldContinueStart(generation)
@@ -189,7 +237,7 @@ actor CaptureService {
                 _ = abortObsoleteStart(generation)
                 return false
             }
-            state = .unavailable(.denied)
+            publish(.unavailable(.denied))
             return false
 
         case .restricted:
@@ -197,7 +245,7 @@ actor CaptureService {
                 _ = abortObsoleteStart(generation)
                 return false
             }
-            state = .unavailable(.restricted)
+            publish(.unavailable(.restricted))
             return false
 
         @unknown default:
@@ -207,7 +255,7 @@ actor CaptureService {
                 _ = abortObsoleteStart(generation)
                 return false
             }
-            state = .unavailable(.restricted)
+            publish(.unavailable(.restricted))
             return false
         }
     }
@@ -237,7 +285,7 @@ actor CaptureService {
         // cheap, fakeable availability check. A device that vanished between
         // the probe and here is a genuine `.noCaptureDevice`.
         guard let device = Self.defaultDevice() else {
-            state = .unavailable(.noCaptureDevice)
+            publish(.unavailable(.noCaptureDevice))
             return state
         }
 
@@ -268,12 +316,17 @@ actor CaptureService {
         }()
 
         if let failure = configured {
-            state = failure
+            publish(failure)
             return state
         }
 
         self.session = session
         configuredDevice = device
+
+        // Runtime errors and interruptions are asynchronous and unsolicited.
+        // Observing them before startRunning() guarantees no event that fires
+        // during startup is missed.
+        observeSessionEvents(session)
 
         // Blocks until the session is live, which is exactly why it belongs on
         // this actor and never on the main actor. Without this call the session
@@ -281,8 +334,108 @@ actor CaptureService {
         // and `.running` would be a lie.
         session.startRunning()
 
-        state = .running
+        // Ask the session rather than assuming. `startRunning()` can fail (a
+        // runtime error, or the camera already claimed by another client), and
+        // publishing `.running` regardless is exactly how the UI ends up
+        // showing a frozen black preview it believes is live.
+        publish(
+            session.isRunning
+                ? .running
+                : .unavailable(.sessionFailed("the camera did not start")))
         return state
+    }
+
+    /// Subscribes to the session's runtime-error and interruption notifications.
+    ///
+    /// AVFoundation posts these on an arbitrary thread; each task hops back
+    /// onto this actor before touching state, so session state stays
+    /// serialized with every other lifecycle operation.
+    private func observeSessionEvents(_ session: AVCaptureSession) {
+        cancelSessionObservation()
+
+        let center = NotificationCenter.default
+        let runtimeErrors = center.notifications(named: .AVCaptureSessionRuntimeError, object: session)
+        let interruptions = center.notifications(named: .AVCaptureSessionWasInterrupted, object: session)
+        let interruptionsEnded = center.notifications(
+            named: .AVCaptureSessionInterruptionEnded, object: session)
+
+        // `Notification` is not `Sendable`, so each payload is reduced to a
+        // value type inside the notification's own task before it is handed
+        // back to the actor.
+        sessionObservationTasks = [
+            Task { [weak self] in
+                for await notification in runtimeErrors {
+                    if Task.isCancelled { return }
+                    let detail =
+                        (notification.userInfo?[AVCaptureSessionErrorKey] as? NSError)?
+                        .localizedDescription ?? "the camera stopped unexpectedly"
+                    await self?.handleRuntimeError(detail)
+                }
+            },
+            Task { [weak self] in
+                for await notification in interruptions {
+                    if Task.isCancelled { return }
+                    let raw = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int
+                    let reason = Self.interruptionReason(raw)
+                    await self?.handleInterruption(reason)
+                }
+            },
+            Task { [weak self] in
+                for await _ in interruptionsEnded {
+                    if Task.isCancelled { return }
+                    await self?.handleInterruptionEnded()
+                }
+            },
+        ]
+    }
+
+    private func cancelSessionObservation() {
+        for task in sessionObservationTasks {
+            task.cancel()
+        }
+        sessionObservationTasks = []
+    }
+
+    private nonisolated static func interruptionReason(_ raw: Int?) -> CaptureInterruptionReason {
+        guard let raw, let reason = AVCaptureSession.InterruptionReason(rawValue: raw) else {
+            return .unknown
+        }
+
+        switch reason {
+        case .videoDeviceInUseByAnotherClient:
+            return .cameraInUseByAnotherClient
+        case .videoDeviceNotAvailableInBackground,
+            .videoDeviceNotAvailableWithMultipleForegroundApps,
+            .videoDeviceNotAvailableDueToSystemPressure:
+            return .videoDeviceNotAvailableInBackground
+        default:
+            return .unknown
+        }
+    }
+
+    /// A runtime error means the session is no longer producing frames.
+    func handleRuntimeError(_ detail: String) {
+        guard wantsRunning else { return }
+        publish(.unavailable(.sessionFailed(detail)))
+    }
+
+    func handleInterruption(_ reason: CaptureInterruptionReason) {
+        guard wantsRunning else { return }
+        publish(.interrupted(reason))
+    }
+
+    /// The system released the camera again, so restart and report the truth.
+    func handleInterruptionEnded() {
+        guard wantsRunning, let session else { return }
+
+        if !session.isRunning {
+            session.startRunning()
+        }
+
+        publish(
+            session.isRunning
+                ? .running
+                : .unavailable(.sessionFailed("the camera did not resume after an interruption")))
     }
 
     /// Stops the session but keeps its configuration.
@@ -295,8 +448,9 @@ actor CaptureService {
     func stop() {
         lifecycleGeneration += 1
         wantsRunning = false
+        cancelSessionObservation()
         session?.stopRunning()
-        state = .idle
+        publish(.idle)
     }
 
     /// Applies a manual zoom factor and returns the clamped value actually used.
@@ -412,10 +566,21 @@ actor CaptureService {
         wantsRunning = true
 
         guard let session else { return false }
+
+        // Observation is torn down by stop(), so re-establish it before the
+        // session goes live again.
+        observeSessionEvents(session)
+
         if !session.isRunning {
             session.startRunning()
         }
-        state = .running
+
+        // Same rule as configureSession: report what the session actually did.
+        // A resume can fail when another app holds the camera.
+        publish(
+            session.isRunning
+                ? .running
+                : .unavailable(.sessionFailed("the camera did not resume")))
         return true
     }
 }

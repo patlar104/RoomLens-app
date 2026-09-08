@@ -54,6 +54,32 @@ final class CameraModel {
         let nextState = await service.prepare(session: previewSession)
         guard !Task.isCancelled else { return }
         state = nextState
+        await reapplyControls()
+    }
+
+    /// Mirrors the capture layer's authoritative state for as long as the
+    /// caller's task lives.
+    ///
+    /// The session can stop without the app asking (interruption, runtime
+    /// error), so state must be observed, not inferred from the last call that
+    /// happened to return. Drive this from a long-lived `.task`.
+    func observeState() async {
+        for await next in await service.stateUpdates() {
+            if Task.isCancelled { return }
+            state = next
+        }
+    }
+
+    /// Re-applies the photographer's settings to freshly configured hardware.
+    ///
+    /// Control intent lives here, not in the controls view: the view is
+    /// destroyed whenever capture stops, and re-creating it must not silently
+    /// reset the camera to 1x, 0 EV, and 5000 K.
+    private func reapplyControls() async {
+        guard state.isRunning else { return }
+        await setZoomFactor(zoomFactor)
+        await setExposureBias(exposureBias)
+        await setWhiteBalance(whiteBalance)
     }
 
     /// Brings the camera back after the app returns to the foreground.
@@ -66,6 +92,7 @@ final class CameraModel {
         if await service.resume() {
             guard !Task.isCancelled else { return }
             state = .running
+            await reapplyControls()
         } else {
             await prepare()
         }

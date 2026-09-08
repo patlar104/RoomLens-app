@@ -15,9 +15,13 @@ import SwiftUI
 struct CameraControlsView: View {
     let camera: CameraModel
 
-    @State private var requestedZoom = 1.0
-    @State private var requestedExposureBias = 0.0
-    @State private var requestedWhiteBalance = WhiteBalanceSetting.neutral
+    /// Local mirrors exist only so sliders can track a drag smoothly. They are
+    /// seeded from the model's applied values, never from hardcoded defaults,
+    /// so re-appearing after a background/foreground cycle no longer resets
+    /// the photographer's settings.
+    @State private var requestedZoom: Double?
+    @State private var requestedExposureBias: Double?
+    @State private var requestedWhiteBalance: WhiteBalanceSetting?
     @State private var centerFocusRequest = 0
 
     var body: some View {
@@ -25,13 +29,13 @@ struct CameraControlsView: View {
             CameraControlSlider(
                 title: "Zoom",
                 valueText: String(format: "%.1fx", camera.zoomFactor),
-                value: $requestedZoom,
+                value: binding(for: $requestedZoom, applied: camera.zoomFactor),
                 range: 1...5)
 
             CameraControlSlider(
                 title: "Exposure",
                 valueText: String(format: "%+.1f EV", camera.exposureBias),
-                value: $requestedExposureBias,
+                value: binding(for: $requestedExposureBias, applied: camera.exposureBias),
                 range: -3...3)
 
             CameraControlSlider(
@@ -58,12 +62,15 @@ struct CameraControlsView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
         .padding()
         .task(id: requestedZoom) {
+            guard let requestedZoom else { return }
             await camera.setZoomFactor(requestedZoom)
         }
         .task(id: requestedExposureBias) {
+            guard let requestedExposureBias else { return }
             await camera.setExposureBias(requestedExposureBias)
         }
         .task(id: requestedWhiteBalance) {
+            guard let requestedWhiteBalance else { return }
             await camera.setWhiteBalance(requestedWhiteBalance)
         }
         .task(id: centerFocusRequest) {
@@ -72,13 +79,23 @@ struct CameraControlsView: View {
         }
     }
 
+    /// A slider binding that reads the model until the user actually moves it.
+    private func binding(for request: Binding<Double?>, applied: Double) -> Binding<Double> {
+        Binding {
+            request.wrappedValue ?? applied
+        } set: { newValue in
+            request.wrappedValue = newValue
+        }
+    }
+
     private var whiteBalanceTemperatureBinding: Binding<Double> {
         Binding {
-            requestedWhiteBalance.temperature
+            (requestedWhiteBalance ?? camera.whiteBalance).temperature
         } set: { newValue in
+            let current = requestedWhiteBalance ?? camera.whiteBalance
             requestedWhiteBalance = WhiteBalanceSetting(
                 temperature: newValue,
-                tint: requestedWhiteBalance.tint)
+                tint: current.tint)
         }
     }
 }
