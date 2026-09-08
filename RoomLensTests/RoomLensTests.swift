@@ -40,6 +40,17 @@ private nonisolated struct StubAuthorization: CameraAuthorizing {
     }
 }
 
+/// Authorization double that suspends requestAccess() until the test releases it.
+private nonisolated struct DelayedAuthorization: CameraAuthorizing {
+    let gate: AuthorizationGate
+
+    var status: AVAuthorizationStatus { .notDetermined }
+
+    func requestAccess() async -> Bool {
+        await gate.requestAccess()
+    }
+}
+
 @Suite("Capture authorization")
 struct CaptureAuthorizationTests {
 
@@ -197,6 +208,50 @@ struct CaptureLifecycleTests {
 
         #expect(state == .idle)
     }
+
+    @Test("Stopping while authorization is pending prevents stale prepare from finishing")
+    func stopDuringPendingAuthorizationInvalidatesPrepare() async throws {
+        let gate = AuthorizationGate()
+        let service = CaptureService(
+            authorization: DelayedAuthorization(gate: gate),
+            hasCaptureDevice: { true })
+
+        let prepareTask = Task {
+            await service.prepare(session: AVCaptureSession())
+        }
+
+        await gate.waitUntilRequested()
+        await service.stop()
+        await gate.grantAccess()
+
+        let preparedState = await prepareTask.value
+        let finalState = await service.state
+
+        #expect(preparedState == .idle)
+        #expect(finalState == .idle)
+    }
+
+    @Test("Cancelling prepare while authorization is pending prevents stale startup")
+    func cancelledPrepareDoesNotStartCapture() async throws {
+        let gate = AuthorizationGate()
+        let service = CaptureService(
+            authorization: DelayedAuthorization(gate: gate),
+            hasCaptureDevice: { true })
+
+        let prepareTask = Task {
+            await service.prepare(session: AVCaptureSession())
+        }
+
+        await gate.waitUntilRequested()
+        prepareTask.cancel()
+        await gate.grantAccess()
+
+        let preparedState = await prepareTask.value
+        let finalState = await service.state
+
+        #expect(preparedState == .idle)
+        #expect(finalState == .idle)
+    }
 }
 
 @Suite("Capture state")
@@ -294,5 +349,39 @@ private final class Prompted: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return flag
+    }
+}
+
+private actor AuthorizationGate {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private var requested = false
+    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func requestAccess() async -> Bool {
+        await withCheckedContinuation { continuation in
+            requested = true
+            self.continuation = continuation
+            let waiters = requestWaiters
+            requestWaiters.removeAll()
+
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+    }
+
+    func waitUntilRequested() async {
+        if requested { return }
+
+        await withCheckedContinuation { continuation in
+            requestWaiters.append(continuation)
+        }
+    }
+
+    func grantAccess() {
+        let continuation = continuation
+        self.continuation = nil
+
+        continuation?.resume(returning: true)
     }
 }

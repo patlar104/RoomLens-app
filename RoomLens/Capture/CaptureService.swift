@@ -55,6 +55,21 @@ actor CaptureService {
 
     private(set) var state: CaptureState = .idle
 
+    /// Monotonically identifies the latest lifecycle intent.
+    ///
+    /// `prepare()` suspends while authorization is requested. Actors are
+    /// reentrant across suspension points, so `stop()` or a newer `prepare()` can
+    /// run before the original authorization request completes. This token lets
+    /// the resumed operation prove it is still the latest request before it
+    /// configures or starts AVFoundation.
+    private var lifecycleGeneration = 0
+
+    /// The caller's latest desired running state.
+    ///
+    /// Generation alone distinguishes old work from new work; this flag records
+    /// whether the newest lifecycle request still wants capture to be running.
+    private var wantsRunning = false
+
     /// - Parameters:
     ///   - authorization: injected so tests can drive denied, restricted, and
     ///     not-determined paths without touching TCC.
@@ -93,6 +108,10 @@ actor CaptureService {
     /// running, so a view's `.task` re-firing cannot start a second session.
     @discardableResult
     func prepare(session: AVCaptureSession) async -> CaptureState {
+        guard !Task.isCancelled else { return state }
+
+        let generation = beginStartRequest()
+
         if case .running = state { return state }
 
         state = .preparing
@@ -103,41 +122,91 @@ actor CaptureService {
         // `.denied` — showing an "Open Settings" button that cannot possibly
         // fix anything. Reported as `.noCaptureDevice` instead.
         guard hasCaptureDevice() else {
+            guard shouldContinueStart(generation) else {
+                return abortObsoleteStart(generation)
+            }
             state = .unavailable(.noCaptureDevice)
             return state
         }
 
-        guard await resolveAuthorization() else { return state }
+        guard await resolveAuthorization(for: generation) else {
+            guard shouldContinueStart(generation) else {
+                return abortObsoleteStart(generation)
+            }
+            return state
+        }
+        guard shouldContinueStart(generation) else {
+            return abortObsoleteStart(generation)
+        }
 
         return configureSession(session)
     }
 
+    private func beginStartRequest() -> Int {
+        lifecycleGeneration += 1
+        wantsRunning = true
+        return lifecycleGeneration
+    }
+
+    private func shouldContinueStart(_ generation: Int) -> Bool {
+        wantsRunning && lifecycleGeneration == generation && !Task.isCancelled
+    }
+
+    private func abortObsoleteStart(_ generation: Int) -> CaptureState {
+        if lifecycleGeneration == generation {
+            wantsRunning = false
+            lifecycleGeneration += 1
+        }
+
+        if case .preparing = state {
+            state = .idle
+        }
+
+        return state
+    }
+
     /// Maps authorization status onto capture state.
     /// Returns whether the caller may proceed to configure the session.
-    private func resolveAuthorization() async -> Bool {
+    private func resolveAuthorization(for generation: Int) async -> Bool {
         switch authorization.status {
         case .authorized:
-            return true
+            return shouldContinueStart(generation)
 
         case .notDetermined:
             // The only state permitted to prompt.
             guard await authorization.requestAccess() else {
+                guard shouldContinueStart(generation) else {
+                    _ = abortObsoleteStart(generation)
+                    return false
+                }
                 state = .unavailable(.denied)
                 return false
             }
-            return true
+            return shouldContinueStart(generation)
 
         case .denied:
+            guard shouldContinueStart(generation) else {
+                _ = abortObsoleteStart(generation)
+                return false
+            }
             state = .unavailable(.denied)
             return false
 
         case .restricted:
+            guard shouldContinueStart(generation) else {
+                _ = abortObsoleteStart(generation)
+                return false
+            }
             state = .unavailable(.restricted)
             return false
 
         @unknown default:
             // Fail closed: an unrecognised status must never be treated as
             // permission to open the camera.
+            guard shouldContinueStart(generation) else {
+                _ = abortObsoleteStart(generation)
+                return false
+            }
             state = .unavailable(.restricted)
             return false
         }
@@ -224,6 +293,8 @@ actor CaptureService {
     /// would try to add a second input to an already-configured session and
     /// fail with "cannot add camera input".
     func stop() {
+        lifecycleGeneration += 1
+        wantsRunning = false
         session?.stopRunning()
         state = .idle
     }
@@ -335,6 +406,11 @@ actor CaptureService {
     /// so the caller knows a full `prepare()` is required.
     @discardableResult
     func resume() -> Bool {
+        guard !Task.isCancelled else { return false }
+
+        lifecycleGeneration += 1
+        wantsRunning = true
+
         guard let session else { return false }
         if !session.isRunning {
             session.startRunning()

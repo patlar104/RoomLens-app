@@ -50,7 +50,10 @@ final class CameraModel {
     /// Callers should drive this from `.task`, which cancels on disappear;
     /// no free-standing `Task {}` is started here.
     func prepare() async {
-        state = await service.prepare(session: previewSession)
+        guard !Task.isCancelled else { return }
+        let nextState = await service.prepare(session: previewSession)
+        guard !Task.isCancelled else { return }
+        state = nextState
     }
 
     /// Brings the camera back after the app returns to the foreground.
@@ -59,7 +62,9 @@ final class CameraModel {
     /// back to a full `prepare()` otherwise. Reconfiguring an already-running
     /// session would fail, because its camera input is still attached.
     func resume() async {
+        guard !Task.isCancelled else { return }
         if await service.resume() {
+            guard !Task.isCancelled else { return }
             state = .running
         } else {
             await prepare()
