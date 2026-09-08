@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-swift.sh\""
+            "command": "sh \"$CLAUDE_PROJECT_DIR/Scripts/hooks/format-swift.sh\""
           }
         ]
       }
@@ -46,13 +46,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-shared-checkout.sh\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/Scripts/hooks/guard-shared-checkout.sh\"",
             "timeout": 10,
             "statusMessage": "Checking for unsafe writes in a shared checkout…"
           },
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-gate.sh\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/Scripts/hooks/lint-gate.sh\"",
             "if": "Bash(git commit:*)",
             "timeout": 60,
             "statusMessage": "swift-format lint on staged files…"
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/build-gate.sh\"",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/Scripts/hooks/build-gate.sh\"",
             "asyncRewake": true,
             "timeout": 600,
             "statusMessage": "Verifying the app still builds…"

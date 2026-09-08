@@ -1,6 +1,6 @@
 #!/bin/sh
-# PreToolUse(Bash) hook: refuse shell commands that overwrite tracked source
-# files from an ad-hoc backup, and refuse destructive git history rewrites.
+# Refuse shell commands that overwrite tracked source files from an ad-hoc
+# backup, and refuse destructive git history rewrites.
 #
 # WHY THIS EXISTS
 # ---------------
@@ -17,31 +17,32 @@
 # Restoring a file is legitimate; doing it from an unversioned /tmp copy is
 # not, because git already holds the authoritative version. This hook blocks
 # the unsafe form and names the safe one.
+#
+# Hosts and events (payload shapes differ; see _common.sh):
+#   Claude Code  PreToolUse (Bash)      -> tool_input.command
+#   Cursor       beforeShellExecution   -> command (top level)
+#   Codex        PreToolUse (Bash)      -> tool_input.command
+#   jcode        pre_tool               -> command (top level)
+#
+# Only shell tools carry a command, so a missing command means "allow".
+
+. "$(dirname -- "$0")/_common.sh"
 
 payload=$(cat)
-
-# Works under two hook systems:
-#   - Claude Code: PreToolUse, payload is {"tool_input":{"command":...}}
-#   - jcode:       pre_tool,    payload is the raw tool input {"command":...},
-#                  with the tool name in $JCODE_HOOK_TOOL_NAME.
-# Only shell tools carry a command, so a missing command means "allow".
-command=$(printf '%s' "$payload" | /usr/bin/python3 -c \
-  'import sys, json
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("")
-    sys.exit(0)
-if not isinstance(d, dict):
-    print("")
-    sys.exit(0)
-# jcode passes the tool input directly; Claude Code nests it.
-inner = d.get("tool_input")
-if not isinstance(inner, dict):
-    inner = d
-print(inner.get("command", "") or "")' 2>/dev/null)
+command=$(printf '%s' "$payload" | hook_field command)
 
 [ -n "$command" ] || exit 0
+
+# Emit a denial in the form each host understands, then exit 2. Exit code 2 is
+# honoured as "block" by Claude Code, Cursor, and Codex alike; the JSON body is
+# what Cursor renders natively, and stderr is what the others surface.
+deny() {
+	printf '{"permission":"deny","user_message":%s,"agent_message":%s}\n' \
+		"$(printf '%s' "$1" | /usr/bin/python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')" \
+		"$(printf '%s' "$1" | /usr/bin/python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+	printf '%s\n' "$1" >&2
+	exit 2
+}
 
 # --- restoring a tracked file from an ad-hoc backup -------------------------
 # Matches: cp /tmp/x.bak <path>.swift, cp ~/x.backup <path>.swift, etc.
@@ -49,10 +50,9 @@ print(inner.get("command", "") or "")' 2>/dev/null)
 # source file, so ordinary `cp` usage is unaffected.
 # shellcheck disable=SC2016  # $TMPDIR is matched literally, not expanded.
 if printf '%s' "$command" \
-  | grep -Eq '(^|[;&|] *)(cp|mv|rsync)[^;&|]*(/tmp/|/var/folders/|\$TMPDIR|~/)[^;&|]*\.(bak|backup|orig|save|copy|[0-9]+)[^;&|]*\.(swift|m|mm|h|plist|pbxproj)'
+	| grep -Eq '(^|[;&|] *)(cp|mv|rsync)[^;&|]*(/tmp/|/var/folders/|\$TMPDIR|~/)[^;&|]*\.(bak|backup|orig|save|copy|[0-9]+)[^;&|]*\.(swift|m|mm|h|plist|pbxproj)'
 then
-  cat >&2 <<'MSG'
-BLOCKED: restoring a tracked source file from an ad-hoc backup.
+	deny 'BLOCKED: restoring a tracked source file from an ad-hoc backup.
 
 Another agent may be editing this file in the same working directory. A copy
 from /tmp can silently revert their in-flight edits, leaving an empty
@@ -66,9 +66,7 @@ Use git, which is the authoritative source and is concurrency-safe:
 
 If you are running a mutation test, prefer:
 
-    git stash && <mutate> && <test> && git checkout -- <file> && git stash pop
-MSG
-  exit 2
+    git stash && <mutate> && <test> && git checkout -- <file> && git stash pop'
 fi
 
 # --- destructive history rewrites -------------------------------------------
@@ -78,22 +76,20 @@ fi
 # is excluded by testing for it separately rather than inline.
 is_force_push=0
 if printf '%s' "$command" | grep -Eq 'git +push +.*--force'; then
-  is_force_push=1
-  printf '%s' "$command" | grep -q -- '--force-with-lease' && is_force_push=0
+	is_force_push=1
+	printf '%s' "$command" | grep -q -- '--force-with-lease' && is_force_push=0
 fi
 
 if [ "$is_force_push" -eq 1 ] \
-  || printf '%s' "$command" | grep -Eq 'git +reset +--hard' \
-  || printf '%s' "$command" | grep -Eq 'git +clean +-[A-Za-z]*f'
+	|| printf '%s' "$command" | grep -Eq 'git +reset +--hard' \
+	|| printf '%s' "$command" | grep -Eq 'git +clean +-[A-Za-z]*f'
 then
-  cat >&2 <<'MSG'
-BLOCKED: destructive git command in a possibly shared working directory.
+	# shellcheck disable=SC2016  # Backticks are prose, not command substitution.
+	deny 'BLOCKED: destructive git command in a possibly shared working directory.
 
 `reset --hard`, `clean -f`, and `push --force` can discard commits or files
 another agent is working on. If you genuinely need this, run it yourself, or
-use a safer form (`git restore <path>`, `git push --force-with-lease`).
-MSG
-  exit 2
+use a safer form (`git restore <path>`, `git push --force-with-lease`).'
 fi
 
 exit 0
