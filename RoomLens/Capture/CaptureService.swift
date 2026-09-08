@@ -46,6 +46,13 @@ actor CaptureService {
     /// Non-nil only once configuration has succeeded.
     private var session: AVCaptureSession?
 
+    /// The configured camera device.
+    ///
+    /// This never crosses the actor boundary. All focus, zoom, exposure, and
+    /// white-balance mutation goes through this actor and is wrapped in
+    /// `lockForConfiguration()`.
+    private var configuredDevice: AVCaptureDevice?
+
     private(set) var state: CaptureState = .idle
 
     /// - Parameters:
@@ -136,6 +143,21 @@ actor CaptureService {
         }
     }
 
+    /// Removes any inputs this service previously attached.
+    ///
+    /// The session outlives a stop/start cycle (the main actor owns it for the
+    /// preview layer), so its camera input is still attached on the next
+    /// `prepare()`. Without clearing it, `canAddInput` refuses the second
+    /// input and configuration fails with "cannot add camera input".
+    ///
+    /// Static and `nonisolated` so it can be unit-tested directly on a bare
+    /// `AVCaptureSession`, with no camera hardware involved.
+    nonisolated static func detachExistingInputs(from session: AVCaptureSession) {
+        for input in session.inputs {
+            session.removeInput(input)
+        }
+    }
+
     /// Builds the capture session.
     ///
     /// Skeleton: it establishes the video input and the correct
@@ -160,6 +182,10 @@ actor CaptureService {
 
             session.sessionPreset = .photo
 
+            // The session may already carry an input from a previous
+            // prepare()/stop() cycle; canAddInput would refuse a second one.
+            Self.detachExistingInputs(from: session)
+
             do {
                 let input = try AVCaptureDeviceInput(device: device)
                 guard session.canAddInput(input) else {
@@ -178,6 +204,7 @@ actor CaptureService {
         }
 
         self.session = session
+        configuredDevice = device
 
         // Blocks until the session is live, which is exactly why it belongs on
         // this actor and never on the main actor. Without this call the session
@@ -199,6 +226,108 @@ actor CaptureService {
     func stop() {
         session?.stopRunning()
         state = .idle
+    }
+
+    /// Applies a manual zoom factor and returns the clamped value actually used.
+    @discardableResult
+    func setZoomFactor(_ requested: Double) throws -> Double {
+        try configureDevice { device in
+            let maximum = min(
+                Double(device.activeFormat.videoMaxZoomFactor),
+                Double(device.maxAvailableVideoZoomFactor))
+            let applied = CaptureControlMath.clampedFinite(
+                requested, lower: Double(device.minAvailableVideoZoomFactor), upper: maximum)
+            device.videoZoomFactor = applied
+            return applied
+        }
+    }
+
+    /// Applies a focus point in normalized camera coordinates.
+    @discardableResult
+    func setFocusPoint(_ requested: NormalizedFocusPoint) throws -> NormalizedFocusPoint {
+        let applied = requested.clamped()
+        return try configureDevice { device in
+            guard device.isFocusPointOfInterestSupported else {
+                throw CaptureControlFailure.unsupported("manual focus point")
+            }
+
+            device.focusPointOfInterest = CGPoint(x: applied.x, y: applied.y)
+
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            } else if device.isFocusModeSupported(.autoFocus) {
+                device.focusMode = .autoFocus
+            } else {
+                throw CaptureControlFailure.unsupported("manual focus mode")
+            }
+
+            return applied
+        }
+    }
+
+    /// Applies exposure compensation and returns the clamped bias actually used.
+    @discardableResult
+    func setExposureBias(_ requested: Double) throws -> Double {
+        try configureDevice { device in
+            let applied = CaptureControlMath.clampedFinite(
+                requested,
+                lower: Double(device.minExposureTargetBias),
+                upper: Double(device.maxExposureTargetBias))
+            device.setExposureTargetBias(Float(applied), completionHandler: nil)
+            return applied
+        }
+    }
+
+    /// Applies a locked white balance and returns the clamped setting used.
+    @discardableResult
+    func setWhiteBalance(_ requested: WhiteBalanceSetting) throws -> WhiteBalanceSetting {
+        let applied = requested.clamped()
+        return try configureDevice { device in
+            guard device.isWhiteBalanceModeSupported(.locked) else {
+                throw CaptureControlFailure.unsupported("locked white balance")
+            }
+
+            let values = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
+                temperature: Float(applied.temperature),
+                tint: Float(applied.tint))
+            let rawGains = device.deviceWhiteBalanceGains(for: values)
+            let gains = Self.normalizedWhiteBalanceGains(
+                rawGains, maximum: device.maxWhiteBalanceGain)
+            device.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
+            return applied
+        }
+    }
+
+    /// Serializes and brackets every `AVCaptureDevice` configuration mutation.
+    private func configureDevice<T>(_ body: (AVCaptureDevice) throws -> T) throws -> T {
+        guard let configuredDevice else {
+            throw CaptureControlFailure.notConfigured
+        }
+
+        do {
+            try configuredDevice.lockForConfiguration()
+            defer { configuredDevice.unlockForConfiguration() }
+            return try body(configuredDevice)
+        } catch let failure as CaptureControlFailure {
+            throw failure
+        } catch {
+            throw CaptureControlFailure.configurationLockFailed(error.localizedDescription)
+        }
+    }
+
+    /// AVFoundation rejects gains outside `[1, maxWhiteBalanceGain]`.
+    private nonisolated static func normalizedWhiteBalanceGains(
+        _ gains: AVCaptureDevice.WhiteBalanceGains,
+        maximum: Float
+    ) -> AVCaptureDevice.WhiteBalanceGains {
+        func clamp(_ value: Float) -> Float {
+            min(max(value, 1), maximum)
+        }
+
+        return AVCaptureDevice.WhiteBalanceGains(
+            redGain: clamp(gains.redGain),
+            greenGain: clamp(gains.greenGain),
+            blueGain: clamp(gains.blueGain))
     }
 
     /// Resumes a previously configured session, e.g. on returning to the

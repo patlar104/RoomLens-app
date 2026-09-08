@@ -219,6 +219,65 @@ struct CaptureStateTests {
     }
 }
 
+@Suite("Manual camera controls")
+struct ManualCameraControlTests {
+
+    @Test("Control math clamps invalid and out-of-range values")
+    func clampedFinite() {
+        #expect(CaptureControlMath.clampedFinite(0.5, lower: 1, upper: 5) == 1)
+        #expect(CaptureControlMath.clampedFinite(6, lower: 1, upper: 5) == 5)
+        #expect(CaptureControlMath.clampedFinite(3, lower: 1, upper: 5) == 3)
+        #expect(CaptureControlMath.clampedFinite(.nan, lower: 1, upper: 5) == 1)
+        #expect(CaptureControlMath.clampedFinite(.infinity, lower: 1, upper: 5) == 1)
+        #expect(CaptureControlMath.clampedFinite(3, lower: 5, upper: 1) == 5)
+    }
+
+    @Test("Focus points clamp to normalized camera coordinates")
+    func focusPointClamps() {
+        let point = NormalizedFocusPoint(x: -0.25, y: 1.4).clamped()
+
+        #expect(point == NormalizedFocusPoint(x: 0, y: 1))
+    }
+
+    @Test("White balance clamps to the supported UI range")
+    func whiteBalanceClamps() {
+        let setting = WhiteBalanceSetting(temperature: 1_000, tint: 90).clamped()
+
+        #expect(setting == WhiteBalanceSetting(temperature: 2_500, tint: 50))
+    }
+
+    @Test("Manual controls require a configured device")
+    func controlsRequireConfiguredDevice() async {
+        let service = CaptureService(
+            authorization: StubAuthorization(status: .authorized),
+            hasCaptureDevice: { true })
+
+        await expectNotConfigured {
+            _ = try await service.setZoomFactor(2)
+        }
+        await expectNotConfigured {
+            _ = try await service.setFocusPoint(.center)
+        }
+        await expectNotConfigured {
+            _ = try await service.setExposureBias(1)
+        }
+        await expectNotConfigured {
+            _ = try await service.setWhiteBalance(.neutral)
+        }
+    }
+
+    private func expectNotConfigured(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            Issue.record("Expected CaptureControlFailure.notConfigured")
+        } catch CaptureControlFailure.notConfigured {
+            // Expected.
+        } catch {
+            Issue.record("Expected notConfigured, got \(error)")
+        }
+    }
+}
+
 /// Minimal thread-safe flag, so the stub's callback stays `Sendable` under
 /// Swift 6 without pulling in a full mocking library.
 private final class Prompted: @unchecked Sendable {

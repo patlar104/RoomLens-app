@@ -19,6 +19,13 @@ final class CameraModel {
     /// Mirrors the capture session state for the UI to render.
     private(set) var state: CaptureState = .idle
 
+    /// Current UI-facing manual control values.
+    private(set) var zoomFactor = 1.0
+    private(set) var exposureBias = 0.0
+    private(set) var focusPoint = NormalizedFocusPoint.center
+    private(set) var whiteBalance = WhiteBalanceSetting.neutral
+    private(set) var controlError: String?
+
     /// The session the preview renders.
     ///
     /// Created and owned here on the main actor, then handed to the capture
@@ -63,5 +70,41 @@ final class CameraModel {
     func stop() async {
         await service.stop()
         state = .idle
+    }
+
+    func setZoomFactor(_ requested: Double) async {
+        do {
+            zoomFactor = try await service.setZoomFactor(requested)
+            controlError = nil
+        } catch {
+            controlError = error.localizedDescription
+        }
+    }
+
+    func setFocusPoint(_ requested: NormalizedFocusPoint) async {
+        do {
+            focusPoint = try await service.setFocusPoint(requested)
+            controlError = nil
+        } catch {
+            controlError = error.localizedDescription
+        }
+    }
+
+    func setExposureBias(_ requested: Double) async {
+        do {
+            exposureBias = try await service.setExposureBias(requested)
+            controlError = nil
+        } catch {
+            controlError = error.localizedDescription
+        }
+    }
+
+    func setWhiteBalance(_ requested: WhiteBalanceSetting) async {
+        do {
+            whiteBalance = try await service.setWhiteBalance(requested)
+            controlError = nil
+        } catch {
+            controlError = error.localizedDescription
+        }
     }
 }

@@ -18,10 +18,14 @@ struct ContentView: View {
                 ProgressView("Preparing camera…")
 
             case .running:
-                CameraPreview(session: camera.previewSession)
-                    // The preview fills the screen; a room shot letterboxed
-                    // into a padded box would defeat the point.
-                    .ignoresSafeArea()
+                ZStack(alignment: .bottom) {
+                    CameraPreview(session: camera.previewSession)
+                        // The preview fills the screen; a room shot letterboxed
+                        // into a padded box would defeat the point.
+                        .ignoresSafeArea()
+
+                    CameraControlsView(camera: camera)
+                }
 
             case .unavailable(let reason):
                 CameraUnavailableView(reason: reason)
