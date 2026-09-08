@@ -1,0 +1,30 @@
+---
+description: Swift 6 concurrency and SwiftUI conventions for RoomLens
+globs: **/*.swift
+alwaysApply: false
+---
+
+# Swift & SwiftUI conventions
+
+The project defaults to `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` under Swift
+6 language mode, so anything crossing an actor boundary must say so explicitly.
+
+- SwiftUI only for UI. Prefer `@Observable` over `ObservableObject`.
+- Prefer `async`/`await` over completion handlers. A `Task` started by a view
+  must be cancelled when the view disappears.
+- Value types that cross the actor boundary need `nonisolated` — including
+  their `Equatable` conformance, or Swift 6 rejects even an `==` comparison.
+- New unit tests use Swift Testing (`@Test`, `#expect`, `#require`), matching
+  `RoomLensTests`. UI tests stay on XCTest.
+- No third-party dependencies without asking first.
+
+```swift
+// ❌ BAD — main-actor isolated by default, so this cannot cross to the actor.
+struct CaptureState: Equatable { ... }
+
+// ✅ GOOD
+nonisolated struct CaptureState: Equatable { ... }
+```
+
+Formatting is `xcrun swift-format` and runs automatically after edits; a commit
+is blocked if staged Swift fails `swift-format lint --strict`.

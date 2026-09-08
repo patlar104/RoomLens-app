@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "sh Scripts/hooks/guard-shared-checkout.sh",
+        "timeout": 10
+      },
+      {
+        "command": "sh Scripts/hooks/lint-gate.sh",
+        "timeout": 60
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "sh Scripts/hooks/format-swift.sh",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "sh Scripts/hooks/build-gate.sh",
+        "timeout": 600,
+        "loop_limit": 3
+      }
+    ]
+  }
+}

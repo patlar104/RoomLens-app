@@ -1,0 +1,42 @@
+# Project-scoped Codex config for RoomLens.
+#
+# Codex loads this only after you trust the project, and it asks you to review
+# and trust each hook (`/hooks`) before it runs. The hook scripts are shared
+# with Claude Code and Cursor; see AGENTS.md.
+#
+# Paths resolve from the git root rather than a relative path, because Codex
+# runs hooks with the session cwd as their working directory and that may be a
+# subdirectory of the repo.
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'sh "$(git rev-parse --show-toplevel)/Scripts/hooks/guard-shared-checkout.sh"'
+timeout = 10
+statusMessage = "Checking for unsafe writes in a shared checkout"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'sh "$(git rev-parse --show-toplevel)/Scripts/hooks/lint-gate.sh"'
+timeout = 60
+statusMessage = "swift-format lint on staged files"
+
+# apply_patch is how Codex edits files; it also matches Edit/Write.
+[[hooks.PostToolUse]]
+matcher = "apply_patch"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = 'sh "$(git rev-parse --show-toplevel)/Scripts/hooks/format-swift.sh"'
+timeout = 30
+statusMessage = "Formatting Swift"
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'sh "$(git rev-parse --show-toplevel)/Scripts/hooks/build-gate.sh"'
+timeout = 600
+statusMessage = "Verifying the app still builds"

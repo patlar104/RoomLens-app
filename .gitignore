@@ -26,8 +26,14 @@ DerivedData/
 Pods/
 Carthage/Build/
 
-# Claude Code — personal overrides (keep settings.json committed)
+# Agent hosts — personal overrides only. The shared config (settings.json,
+# hooks.json, agents/, rules/, .codex/config.toml) is intentionally committed so
+# every host behaves the same for everyone on the repo.
 .claude/settings.local.json
+.cursor/settings.local.json
+.cursor/mcp.local.json
+.codex/config.local.toml
+AGENTS.override.md
 
 # Editor — personal / machine-specific (current contents are remote-dev prefs only)
 .vscode/

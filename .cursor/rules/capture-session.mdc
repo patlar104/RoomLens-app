@@ -1,0 +1,30 @@
+---
+description: AVFoundation capture-session rules for the RoomLens capture layer
+globs: RoomLens/Capture/**/*.swift
+alwaysApply: false
+---
+
+# Capture layer
+
+`CaptureService` is an `actor` and *is* the dedicated session queue. It owns the
+`AVCaptureSession` and never vends it out, so UI code cannot mutate the session
+off-queue. `CameraModel` (`@Observable @MainActor`) is the only type views talk
+to.
+
+- All `lockForConfiguration()` work belongs in `CaptureService`, and every lock
+  must be balanced with `unlockForConfiguration()` on every early return/throw.
+- Pair `beginConfiguration()` with `commitConfiguration()`; never call
+  `start/stopRunning()` on the main thread.
+- Guard manual controls with `isExposureModeSupported` / `isFocusModeSupported`
+  / `isWhiteBalanceModeSupported` / zoom range checks before applying.
+- Remove KVO and `NotificationCenter` observers (interruption, runtime error,
+  subject-area change) on teardown.
+- Start the session only after authorization is confirmed; handle
+  `AVCaptureSessionWasInterrupted` and resume.
+- Camera Control must degrade gracefully where the hardware is absent.
+- Never retain large pixel buffers on the main actor.
+
+Authorization is injected through `CameraAuthorizing` because the simulator has
+no camera and tests must never trigger a TCC prompt. Only `.denied` is
+resolvable in Settings; `.restricted` and `.noCaptureDevice` must not offer that
+affordance.
