@@ -1,0 +1,70 @@
+name: CI (cloud fallback)
+
+# Manual-only. Use this when the self-hosted macOS runner is unavailable
+# (Mac powered off, travelling, etc). Runs the same build + test as ci.yml
+# but on a GitHub-hosted macos-26 image, which spends hosted minutes.
+#
+#   gh workflow run "CI (cloud fallback)" --ref <branch>
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-cloud-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & Test (hosted)
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      - name: Resolve simulator
+        run: |
+          set -o pipefail
+          xcrun simctl list devices available
+          udid=$(python3 .github/scripts/pick-simulator.py)
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Lint
+        run: |
+          set -o pipefail
+          xcrun swift-format lint --strict --recursive \
+            RoomLens RoomLensTests RoomLensUITests
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RoomLens.xcodeproj \
+            -scheme RoomLens \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            | xcbeautify
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project RoomLens.xcodeproj \
+            -scheme RoomLens \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -resultBundlePath TestResults.xcresult \
+            | xcbeautify
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          if-no-files-found: ignore

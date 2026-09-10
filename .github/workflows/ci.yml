@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Runs on the self-hosted macOS runner (an Apple-silicon Mac with Xcode 26+
+# already installed). GitHub-hosted minutes are limited, so the cloud
+# equivalent of build-test lives in ci-cloud.yml and is manual-trigger only.
+#
+# Fork PRs from outside collaborators require manual approval before any job
+# runs here (repo setting: fork-pr-contributor-approval = all_external_
+# contributors), because a self-hosted runner executes PR code on real hardware.
+
+jobs:
+  lint:
+    name: swift-format lint
+    runs-on: [self-hosted, macOS, roomlens]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Mirrors Scripts/hooks/lint-gate.sh, which blocks a local commit when a
+      # staged Swift file fails `swift-format lint --strict`.
+      - name: Lint
+        run: |
+          set -o pipefail
+          xcrun swift-format lint --strict --recursive \
+            RoomLens RoomLensTests RoomLensUITests
+
+  build-test:
+    name: Build & Test
+    runs-on: [self-hosted, macOS, roomlens]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes | grep -i ios || true
+
+      # xcbeautify is expected to be on the runner already; install only if not.
+      - name: Ensure xcbeautify
+        run: command -v xcbeautify >/dev/null 2>&1 || brew install xcbeautify
+
+      # Prefers "iPhone 17 Pro" and falls back to another iPhone, but only on
+      # an iOS 26+ runtime (the deployment target) — see AGENTS.md and
+      # .github/scripts/pick-simulator.py. Uses the UDID so the destination is
+      # unambiguous when the same device name exists on multiple runtimes.
+      - name: Resolve simulator
+        run: |
+          set -o pipefail
+          udid=$(python3 .github/scripts/pick-simulator.py)
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RoomLens.xcodeproj \
+            -scheme RoomLens \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            | xcbeautify
+
+      - name: Test
+        run: |
+          set -o pipefail
+          rm -rf TestResults.xcresult
+          xcodebuild test \
+            -project RoomLens.xcodeproj \
+            -scheme RoomLens \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -resultBundlePath TestResults.xcresult \
+            | xcbeautify
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          if-no-files-found: ignore
