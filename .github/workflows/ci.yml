@@ -50,23 +50,15 @@ jobs:
       - name: Ensure xcbeautify
         run: command -v xcbeautify >/dev/null 2>&1 || brew install xcbeautify
 
-      # The canonical simulator is "iPhone 17 Pro" on iOS 26.x (see AGENTS.md).
-      # Resolve a concrete available iPhone and fall back to any iPhone rather
-      # than hard-failing if the installed device set changes.
+      # Prefers "iPhone 17 Pro" and falls back to another iPhone, but only on
+      # an iOS 26+ runtime (the deployment target) — see AGENTS.md and
+      # .github/scripts/pick-simulator.py. Uses the UDID so the destination is
+      # unambiguous when the same device name exists on multiple runtimes.
       - name: Resolve simulator
         run: |
-          name=$(xcrun simctl list devices available \
-            | grep -Eo 'iPhone 17 Pro( Max)?' | head -1)
-          if [ -z "$name" ]; then
-            name=$(xcrun simctl list devices available \
-              | grep -Eo 'iPhone [0-9]+[^(]*' | head -1 | sed 's/ *$//')
-          fi
-          if [ -z "$name" ]; then
-            echo "No iOS Simulator available on this runner" >&2
-            exit 1
-          fi
-          echo "SIM_NAME=$name" >> "$GITHUB_ENV"
-          echo "Using simulator: $name"
+          set -o pipefail
+          udid=$(python3 .github/scripts/pick-simulator.py)
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
@@ -74,7 +66,7 @@ jobs:
           xcodebuild build \
             -project RoomLens.xcodeproj \
             -scheme RoomLens \
-            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             | xcbeautify
 
       - name: Test
@@ -84,7 +76,7 @@ jobs:
           xcodebuild test \
             -project RoomLens.xcodeproj \
             -scheme RoomLens \
-            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             -resultBundlePath TestResults.xcresult \
             | xcbeautify
 

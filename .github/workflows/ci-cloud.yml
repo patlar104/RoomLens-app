@@ -31,19 +31,10 @@ jobs:
 
       - name: Resolve simulator
         run: |
+          set -o pipefail
           xcrun simctl list devices available
-          name=$(xcrun simctl list devices available \
-            | grep -Eo 'iPhone 17 Pro( Max)?' | head -1)
-          if [ -z "$name" ]; then
-            name=$(xcrun simctl list devices available \
-              | grep -Eo 'iPhone [0-9]+[^(]*' | head -1 | sed 's/ *$//')
-          fi
-          if [ -z "$name" ]; then
-            echo "No iOS Simulator available on this runner" >&2
-            exit 1
-          fi
-          echo "SIM_NAME=$name" >> "$GITHUB_ENV"
-          echo "Using simulator: $name"
+          udid=$(python3 .github/scripts/pick-simulator.py)
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
 
       - name: Lint
         run: |
@@ -57,7 +48,7 @@ jobs:
           xcodebuild build \
             -project RoomLens.xcodeproj \
             -scheme RoomLens \
-            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             | xcbeautify
 
       - name: Test
@@ -66,7 +57,7 @@ jobs:
           xcodebuild test \
             -project RoomLens.xcodeproj \
             -scheme RoomLens \
-            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             -resultBundlePath TestResults.xcresult \
             | xcbeautify
 

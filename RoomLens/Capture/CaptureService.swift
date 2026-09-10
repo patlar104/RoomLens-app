@@ -354,8 +354,10 @@ actor CaptureService {
         cancelSessionObservation()
 
         let center = NotificationCenter.default
-        let runtimeErrors = center.notifications(named: .AVCaptureSessionRuntimeError, object: session)
-        let interruptions = center.notifications(named: .AVCaptureSessionWasInterrupted, object: session)
+        let runtimeErrors = center.notifications(
+            named: .AVCaptureSessionRuntimeError, object: session)
+        let interruptions = center.notifications(
+            named: .AVCaptureSessionWasInterrupted, object: session)
         let interruptionsEnded = center.notifications(
             named: .AVCaptureSessionInterruptionEnded, object: session)
 
