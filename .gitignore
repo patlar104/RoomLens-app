@@ -34,6 +34,13 @@ Carthage/Build/
 .cursor/mcp.local.json
 .codex/config.local.toml
 AGENTS.override.md
+# Codex hooks belong in .codex/config.toml only. Codex loads this file *and*
+# config.toml and warns about the duplicate layer — see AGENTS.md.
+.codex/hooks.json
+
+# Create ML — local model-training scratch projects (no code references them
+# yet; commit deliberately if one becomes a real asset).
+*.mlproj/
 
 # Editor — ignore personal VS Code/Cursor junk, but keep shared workspace
 # settings so Even Better TOML can validate .codex/agents/*.toml.

@@ -12,9 +12,24 @@ focus, zoom, and white balance**, and is designed to work seamlessly with
 Apple's **Camera Control** hardware button and the **AVFoundation** capture
 stack for smooth, high-quality capture.
 
+**Room Scan** (`RoomScanView`, ARKit + SceneKit) is the second capture mode: it
+reconstructs a room's geometry — world tracking, horizontal and vertical plane
+detection, and LiDAR scene mesh where the hardware supports it. It is a real
+feature under active development, not a throwaway spike; treat it as
+first-class. `ContentView` switches between Camera and Room Scan and hands the
+physical camera off between them (see "Room Scan mode" below).
+
+Name discipline: the feature is **Room Scan** everywhere the user or the code
+sees it (`RoomLensMode.roomScan`, `RoomScan*` types, the "Room Scan" UI label).
+"Capture" already means the AVFoundation *photo* path (`RoomLens/Capture/`), so
+never reuse that word for the ARKit path. AR/LiDAR are implementation details,
+not the feature name.
+
 Keep this domain in mind: the hard parts of this codebase are capture-session
-lifecycle, device configuration locking, real-time control UI, and hardware
-button integration — not generic app plumbing.
+lifecycle, device configuration locking, real-time control UI, hardware
+button integration, and the ARKit/AVFoundation camera-ownership handoff — not
+generic app plumbing.
+
 
 ## Stack
 
@@ -70,8 +85,12 @@ canonical "see it run" path.
   `lockForConfiguration()` work runs off the main actor on a dedicated session
   queue; only publish resulting state back to `@MainActor`.
 - New unit tests use Swift Testing, matching `RoomLensTests`.
-- Any camera / photo-library / location access needs its `Info.plist` usage
-  string **and** graceful handling of a denied authorization status.
+- Any camera / photo-library / location access needs its usage string **and**
+  graceful handling of a denied authorization status. There is no standalone
+  `Info.plist`: strings are `INFOPLIST_KEY_*` build settings in
+  `project.pbxproj` (currently `NSCameraUsageDescription` and
+  `NSPhotoLibraryAddUsageDescription`), which is one of the approval-gated
+  files — ask before adding a key.
 - Formatting: `xcrun swift-format` (runs automatically via a post-edit hook).
   Match existing style.
 
@@ -97,6 +116,35 @@ session work stays off the main actor:
 
 Only `.denied` is resolvable in Settings; `.restricted` and `.noCaptureDevice`
 must not offer that affordance.
+
+## Room Scan mode
+
+`RoomLens/RoomScanView.swift` is a second camera-owning subsystem, selected
+by the segmented picker in `ContentView`. It is ARKit + SceneKit, not
+AVFoundation.
+
+- **One camera, two owners.** ARKit's `ARSession` and the AVFoundation
+  `AVCaptureSession` both want exclusive camera access. `ContentView`
+  `.task(id: "\(scenePhase)-\(mode.rawValue)")` drives
+  `updateCameraLifecycle()`, which `await camera.stop()`s the capture session
+  *and only then* sets `isRoomScanReady = true`. Do not construct the AR
+  viewport while the capture session may still be running, or the two stacks
+  race for the camera on real hardware. Leaving Room Scan does the reverse.
+- **Same authorization seam.** `RoomScanAvailabilityResolver` takes the same
+  injected `CameraAuthorizing` as `CaptureService`, plus a `supportsWorld
+  Tracking` probe, so the AR permission + hardware matrix is unit-tested
+  without starting ARKit or triggering TCC. `RoomScanAvailability` /
+  `RoomScanUnavailableReason` are `nonisolated Sendable` enums for the same
+  reason `CaptureState` is.
+- **Availability rules mirror the capture stack.** Only `.denied` is
+  resolvable in Settings; `.unsupportedHardware` (the simulator, or any
+  device without world tracking) and `.restricted` must not offer that
+  affordance. The simulator always lands on `.unsupportedHardware`.
+- **`ARViewport` lifecycle.** The `UIViewRepresentable` pauses `view.session`
+  when `scenePhase` leaves `.active` and on `dismantleUIView`, and re-runs it
+  on return; a `resetToken` `Int` binding is the one-way signal to reset
+  tracking and drop anchors. LiDAR mesh (`.meshWithClassification`, then
+  `.mesh`) is enabled only when `supportsSceneReconstruction` allows it.
 
 ## Do not touch without explicit approval
 
@@ -143,7 +191,8 @@ payload shapes, so add new hooks there rather than assuming one host's JSON.
 
 **Never add `.codex/hooks.json`.** Codex loads that file *and* `.codex/config.toml`
 and warns that this layer should have a single representation. Hooks for Codex
-belong only in `config.toml`.
+belong only in `config.toml`. `.gitignore` also lists `.codex/hooks.json` so a
+stray copy can never be committed.
 
 | Script | When | Effect |
 | --- | --- | --- |
@@ -155,6 +204,13 @@ belong only in `config.toml`.
 Cursor needs "Include third-party Plugins, Skills, and other configs" **off**
 for this repo, or it will load `.claude/settings.json` in addition to
 `.cursor/hooks.json` and run every hook twice.
+
+## Local scratch, not committed
+
+`*.mlproj/` (Create ML training projects) is gitignored. `MyObjectTracker.mlproj`
+is a `known3DObjectTracker` project used for local model experiments; nothing in
+the app references it. If one of these ever produces a real `.mlmodel` asset,
+commit that deliberately rather than un-ignoring the whole project directory.
 
 ## Editor settings vs personal overrides
 

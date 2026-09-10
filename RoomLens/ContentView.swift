@@ -9,32 +9,17 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var camera = CameraModel()
+    @State private var mode = RoomLensMode.camera
+    @State private var isRoomScanReady = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        Group {
-            switch camera.state {
-            case .idle, .preparing:
-                ProgressView("Preparing camera…")
+        ZStack(alignment: .top) {
+            modeContent
 
-            case .running:
-                ZStack(alignment: .bottom) {
-                    CameraPreview(session: camera.previewSession)
-                        // The preview fills the screen; a room shot letterboxed
-                        // into a padded box would defeat the point.
-                        .ignoresSafeArea()
-
-                    CameraControlsView(camera: camera)
-                }
-
-            case .interrupted(let reason):
-                CameraInterruptedView(reason: reason)
-                    .padding()
-
-            case .unavailable(let reason):
-                CameraUnavailableView(reason: reason)
-                    .padding()
-            }
+            RoomLensModePicker(selection: $mode)
+                .padding(.horizontal)
+                .padding(.top, 12)
         }
         // The capture layer is the authority on session state: interruptions
         // and runtime errors happen without the app asking. This long-lived
@@ -42,23 +27,106 @@ struct ContentView: View {
         .task {
             await camera.observeState()
         }
-        // Drives the session from the app lifecycle. `.task(id:)` re-runs on
-        // each phase change and is cancelled when the view disappears, so no
-        // free-standing `Task {}` is needed (per the project conventions).
-        //
-        // Releasing the camera when not frontmost matters: a running capture
-        // session drains the battery, and iOS may terminate an app that holds
-        // the camera in the background.
-        .task(id: scenePhase) {
-            switch scenePhase {
-            case .active:
-                await camera.resume()
-            case .inactive, .background:
-                await camera.stop()
-            @unknown default:
-                await camera.stop()
+        // Drives the camera from both app lifecycle and the selected workspace.
+        // ARKit also needs the camera, so switching into Room Scan releases
+        // the AVFoundation session before the AR viewport starts.
+        .task(id: "\(scenePhase)-\(mode.rawValue)") {
+            await updateCameraLifecycle()
+        }
+    }
+
+    @ViewBuilder
+    private var modeContent: some View {
+        switch mode {
+        case .camera:
+            cameraContent
+        case .roomScan:
+            if isRoomScanReady {
+                RoomScanView()
+            } else {
+                ProgressView("Opening Room Scan…")
             }
         }
+    }
+
+    @ViewBuilder
+    private var cameraContent: some View {
+        switch camera.state {
+        case .idle, .preparing:
+            ProgressView("Preparing camera…")
+
+        case .running:
+            ZStack(alignment: .bottom) {
+                CameraPreview(session: camera.previewSession)
+                    // The preview fills the screen; a room shot letterboxed
+                    // into a padded box would defeat the point.
+                    .ignoresSafeArea()
+
+                CameraControlsView(camera: camera)
+            }
+
+        case .interrupted(let reason):
+            CameraInterruptedView(reason: reason)
+                .padding()
+
+        case .unavailable(let reason):
+            CameraUnavailableView(reason: reason)
+                .padding()
+        }
+    }
+
+    private func updateCameraLifecycle() async {
+        guard scenePhase == .active else {
+            isRoomScanReady = false
+            await camera.stop()
+            return
+        }
+
+        switch mode {
+        case .camera:
+            isRoomScanReady = false
+            await camera.resume()
+        case .roomScan:
+            // ARKit also owns the camera. Do not construct the AR viewport until
+            // the AVFoundation session has fully stopped, or both stacks can
+            // race for camera ownership on real hardware.
+            await camera.stop()
+            guard !Task.isCancelled, scenePhase == .active, mode == .roomScan else {
+                return
+            }
+            isRoomScanReady = true
+        }
+    }
+}
+
+private enum RoomLensMode: String, CaseIterable, Identifiable {
+    case camera
+    case roomScan
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .camera:
+            "Camera"
+        case .roomScan:
+            "Room Scan"
+        }
+    }
+}
+
+private struct RoomLensModePicker: View {
+    @Binding var selection: RoomLensMode
+
+    var body: some View {
+        Picker("RoomLens mode", selection: $selection) {
+            ForEach(RoomLensMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(8)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 }
 
