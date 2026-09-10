@@ -47,6 +47,24 @@ final class RoomLensUITests: XCTestCase {
     }
 
     @MainActor
+    func testRoomScanShowsUnsupportedMessageOnSimulator() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        app.buttons["Room Scan"].tap()
+
+        let unavailable = app.staticTexts["Room Scan unavailable"]
+        let resolved = NSPredicate(format: "exists == true")
+        expectation(for: resolved, evaluatedWith: unavailable, handler: nil)
+        waitForExpectations(timeout: 10)
+
+        XCTAssertTrue(unavailable.exists)
+        XCTAssertFalse(
+            app.buttons["Open Settings"].exists,
+            "Offered a Settings link for simulator AR hardware that does not exist.")
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()

@@ -8,6 +8,8 @@
 # runs hooks with the session cwd as their working directory and that may be a
 # subdirectory of the repo.
 
+sandbox_mode = "workspace-write"
+model_verbosity = "high"
 [[hooks.PreToolUse]]
 matcher = "Bash"
 
@@ -40,3 +42,6 @@ type = "command"
 command = 'sh "$(git rev-parse --show-toplevel)/Scripts/hooks/build-gate.sh"'
 timeout = 600
 statusMessage = "Verifying the app still builds"
+
+[sandbox_workspace_write]
+network_access = true

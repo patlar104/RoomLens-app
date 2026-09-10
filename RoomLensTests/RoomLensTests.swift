@@ -427,6 +427,79 @@ struct ManualCameraControlTests {
     }
 }
 
+@Suite("Room Scan availability")
+struct RoomScanAvailabilityTests {
+
+    @Test("Unsupported AR hardware reports unavailable without prompting")
+    func unsupportedHardwareDoesNotPrompt() async throws {
+        let prompted = Prompted()
+        let resolver = RoomScanAvailabilityResolver(
+            authorization: StubAuthorization(
+                status: .notDetermined,
+                grantsAccess: true,
+                didRequest: { prompted.mark() }
+            ),
+            supportsWorldTracking: { false })
+
+        let availability = await resolver.resolve()
+
+        #expect(availability == .unavailable(.unsupportedHardware))
+        #expect(prompted.value == false)
+    }
+
+    @Test("Authorized AR-capable devices can enter Room Scan")
+    func authorizedDeviceIsReady() async throws {
+        let resolver = RoomScanAvailabilityResolver(
+            authorization: StubAuthorization(status: .authorized),
+            supportsWorldTracking: { true })
+
+        let availability = await resolver.resolve()
+
+        #expect(availability == .ready)
+    }
+
+    @Test("Denied camera access blocks Room Scan and is settings-resolvable")
+    func deniedCameraBlocksRoomScan() async throws {
+        let resolver = RoomScanAvailabilityResolver(
+            authorization: StubAuthorization(status: .denied),
+            supportsWorldTracking: { true })
+
+        let availability = await resolver.resolve()
+
+        #expect(availability == .unavailable(.denied))
+        #expect(RoomScanUnavailableReason.denied.isResolvableInSettings)
+    }
+
+    @Test("Restricted camera access blocks Room Scan without settings recovery")
+    func restrictedCameraBlocksRoomScan() async throws {
+        let resolver = RoomScanAvailabilityResolver(
+            authorization: StubAuthorization(status: .restricted),
+            supportsWorldTracking: { true })
+
+        let availability = await resolver.resolve()
+
+        #expect(availability == .unavailable(.restricted))
+        #expect(!RoomScanUnavailableReason.restricted.isResolvableInSettings)
+    }
+
+    @Test("Not-determined camera access prompts only on AR-capable devices")
+    func notDeterminedPromptsOnCapableDevice() async throws {
+        let prompted = Prompted()
+        let resolver = RoomScanAvailabilityResolver(
+            authorization: StubAuthorization(
+                status: .notDetermined,
+                grantsAccess: true,
+                didRequest: { prompted.mark() }
+            ),
+            supportsWorldTracking: { true })
+
+        let availability = await resolver.resolve()
+
+        #expect(availability == .ready)
+        #expect(prompted.value == true)
+    }
+}
+
 /// Minimal thread-safe flag, so the stub's callback stays `Sendable` under
 /// Swift 6 without pulling in a full mocking library.
 private final class Prompted: @unchecked Sendable {

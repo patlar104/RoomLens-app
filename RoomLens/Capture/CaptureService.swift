@@ -22,7 +22,7 @@
 //  `CaptureState` is a plain enum rather than a reference to session objects.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 
 /// Owns the AVCaptureSession and all device configuration.
 ///
@@ -355,11 +355,11 @@ actor CaptureService {
 
         let center = NotificationCenter.default
         let runtimeErrors = center.notifications(
-            named: .AVCaptureSessionRuntimeError, object: session)
+            named: AVCaptureSession.runtimeErrorNotification, object: session)
         let interruptions = center.notifications(
-            named: .AVCaptureSessionWasInterrupted, object: session)
+            named: AVCaptureSession.wasInterruptedNotification, object: session)
         let interruptionsEnded = center.notifications(
-            named: .AVCaptureSessionInterruptionEnded, object: session)
+            named: AVCaptureSession.interruptionEndedNotification, object: session)
 
         // `Notification` is not `Sendable`, so each payload is reduced to a
         // value type inside the notification's own task before it is handed
