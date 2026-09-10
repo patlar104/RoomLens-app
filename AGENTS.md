@@ -176,3 +176,37 @@ Personal editor overlay that *does* load:
 - **Project-local file:** gitignored `RoomLens.local.code-workspace`. Open it
   with File → Open Workspace from File. Workspace `"settings"` override
   folder settings. Opening the folder alone ignores this file.
+
+## Continuous integration
+
+GitHub Actions, two workflows in `.github/workflows/`:
+
+- `ci.yml` — runs on push to `main` and on pull requests. Two jobs:
+  `swift-format lint` (`swift-format lint --strict --recursive`, mirrors
+  `lint-gate.sh`) and `Build & Test` (the canonical `xcodebuild build` +
+  `test` from "Build & test" above). Targets the **self-hosted** runner
+  (`runs-on: [self-hosted, macOS, roomlens]`) — an Apple-silicon Mac with
+  Xcode 26+ already installed. GitHub-hosted macOS minutes are limited, so
+  this is the default path.
+- `ci-cloud.yml` — the same build + test on a hosted `macos-26` image,
+  **manual trigger only** (`workflow_dispatch`). Use it when the self-hosted
+  runner is offline: `gh workflow run "CI (cloud fallback)" --ref <branch>`.
+
+Fork PRs from outside collaborators require manual approval before any
+workflow runs (repo setting `fork-pr-contributor-approval =
+all_external_contributors`), because the self-hosted runner executes PR code
+on real hardware.
+
+**Fixing a red check (including from an automated "fix CI" session):**
+
+- The `Build & Test` job needs the self-hosted Mac — a machine without Xcode
+  and an iOS 26 simulator **cannot reproduce or verify it**. Reason from the
+  job log, push the fix to the PR branch, and let the runner re-check on
+  `synchronize`. Do **not** point `ci.yml` at a hosted image, add
+  `continue-on-error`, or otherwise weaken the workflow to force green.
+- The `swift-format lint` job *is* reproducible anywhere a Swift toolchain is
+  present: `xcrun swift-format lint --strict --recursive RoomLens
+  RoomLensTests RoomLensUITests`. Fix with `xcrun swift-format --in-place` and
+  re-stage.
+- Runner control on the host Mac: `~/actions-runner-roomlens/svc.sh status`
+  (`stop` / `start` to pause or resume CI on that machine).
