@@ -10,18 +10,21 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Runs on the self-hosted macOS runner (an Apple-silicon Mac with Xcode 26+
+# already installed). GitHub-hosted minutes are limited, so the cloud
+# equivalent of build-test lives in ci-cloud.yml and is manual-trigger only.
+#
+# Fork PRs from outside collaborators require manual approval before any job
+# runs here (repo setting: fork-pr-contributor-approval = all_external_
+# contributors), because a self-hosted runner executes PR code on real hardware.
+
 jobs:
   lint:
     name: swift-format lint
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, roomlens]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode.app
-          xcodebuild -version
 
       # Mirrors Scripts/hooks/lint-gate.sh, which blocks a local commit when a
       # staged Swift file fails `swift-format lint --strict`.
@@ -33,25 +36,25 @@ jobs:
 
   build-test:
     name: Build & Test
-    runs-on: macos-26
-    timeout-minutes: 30
+    runs-on: [self-hosted, macOS, roomlens]
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Toolchain versions
         run: |
-          sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
+          xcrun simctl list runtimes | grep -i ios || true
 
-      - name: Install xcbeautify
-        run: brew install xcbeautify
+      # xcbeautify is expected to be on the runner already; install only if not.
+      - name: Ensure xcbeautify
+        run: command -v xcbeautify >/dev/null 2>&1 || brew install xcbeautify
 
       # The canonical simulator is "iPhone 17 Pro" on iOS 26.x (see AGENTS.md).
-      # Runner images drift, so resolve a concrete available iPhone and fall
-      # back to any booted-capable iPhone rather than hard-failing on a name.
+      # Resolve a concrete available iPhone and fall back to any iPhone rather
+      # than hard-failing if the installed device set changes.
       - name: Resolve simulator
         run: |
-          xcrun simctl list devices available
           name=$(xcrun simctl list devices available \
             | grep -Eo 'iPhone 17 Pro( Max)?' | head -1)
           if [ -z "$name" ]; then
@@ -77,6 +80,7 @@ jobs:
       - name: Test
         run: |
           set -o pipefail
+          rm -rf TestResults.xcresult
           xcodebuild test \
             -project RoomLens.xcodeproj \
             -scheme RoomLens \
