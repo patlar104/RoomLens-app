@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: swift-format lint
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      # Mirrors Scripts/hooks/lint-gate.sh, which blocks a local commit when a
+      # staged Swift file fails `swift-format lint --strict`.
+      - name: Lint
+        run: |
+          set -o pipefail
+          xcrun swift-format lint --strict --recursive \
+            RoomLens RoomLensTests RoomLensUITests
+
+  build-test:
+    name: Build & Test
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      # The canonical simulator is "iPhone 17 Pro" on iOS 26.x (see AGENTS.md).
+      # Runner images drift, so resolve a concrete available iPhone and fall
+      # back to any booted-capable iPhone rather than hard-failing on a name.
+      - name: Resolve simulator
+        run: |
+          xcrun simctl list devices available
+          name=$(xcrun simctl list devices available \
+            | grep -Eo 'iPhone 17 Pro( Max)?' | head -1)
+          if [ -z "$name" ]; then
+            name=$(xcrun simctl list devices available \
+              | grep -Eo 'iPhone [0-9]+[^(]*' | head -1 | sed 's/ *$//')
+          fi
+          if [ -z "$name" ]; then
+            echo "No iOS Simulator available on this runner" >&2
+            exit 1
+          fi
+          echo "SIM_NAME=$name" >> "$GITHUB_ENV"
+          echo "Using simulator: $name"
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project RoomLens.xcodeproj \
+            -scheme RoomLens \
+            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            | xcbeautify
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project RoomLens.xcodeproj \
+            -scheme RoomLens \
+            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -resultBundlePath TestResults.xcresult \
+            | xcbeautify
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          if-no-files-found: ignore
