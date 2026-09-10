@@ -24,7 +24,7 @@ jobs:
     runs-on: [self-hosted, macOS, roomlens]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Mirrors Scripts/hooks/lint-gate.sh, which blocks a local commit when a
       # staged Swift file fails `swift-format lint --strict`.
@@ -39,7 +39,7 @@ jobs:
     runs-on: [self-hosted, macOS, roomlens]
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Toolchain versions
         run: |
@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload test results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TestResults
           path: TestResults.xcresult
